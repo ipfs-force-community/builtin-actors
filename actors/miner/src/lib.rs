@@ -3,7 +3,7 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::iter;
 use std::ops::Neg;
 
@@ -747,7 +747,7 @@ impl Actor {
                 }
             }
         }
-        let mut svis = Vec::new();
+        let mut svis = Vec::with_capacity(precommits.len());
         let miner_actor_id: u64 = if let Payload::ID(i) = rt.message().receiver().payload() {
             *i
         } else {
@@ -760,7 +760,7 @@ impl Actor {
         let receiver_bytes =
             serialize_vec(&rt.message().receiver(), "address for seal verification challenge")?;
 
-        for (i, precommit) in precommits.iter().enumerate() {
+        for  precommit in precommits.iter() {
             let interactive_epoch =
                 precommit.pre_commit_epoch + rt.policy().pre_commit_challenge_delay;
             if rt.curr_epoch() <= interactive_epoch {
