@@ -6,9 +6,10 @@ use fil_actor_miner::{
 };
 use fil_actors_runtime::runtime::Runtime;
 use fvm_ipld_bitfield::BitField;
-use fvm_shared::{bigint::BigInt, clock::ChainEpoch, sector::SectorSize};
+use fvm_shared::{bigint::BigInt, clock::ChainEpoch};
 
 mod util;
+use fil_actors_runtime::test_utils::make_piece_cid;
 use num_traits::Zero;
 use util::*;
 
@@ -46,11 +47,7 @@ fn valid_precommits_then_aggregate_provecommit() {
         sector_nos_bf.set(i);
         let precommit_params =
             actor.make_pre_commit_params(i, precommit_epoch - 1, expiration, vec![1]);
-        let config = PreCommitConfig::new(
-            deal_weight.clone(),
-            BigInt::from(verified_deal_weight),
-            SectorSize::_2KiB,
-        );
+        let config = PreCommitConfig::new(Some(make_piece_cid("1".as_bytes())));
         let precommit = actor.pre_commit_sector_and_get(&mut rt, precommit_params, config, i == 0);
         precommits.push(precommit);
     }

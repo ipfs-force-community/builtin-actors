@@ -3,8 +3,8 @@
 use fil_actor_account::Method as AccountMethod;
 use fil_actor_market::{
     ActivateDealsParams, ComputeDataCommitmentParams, ComputeDataCommitmentReturn,
-    Method as MarketMethod, OnMinerSectorsTerminateParams, SectorDataSpec, SectorDeals,
-    VerifyDealsForActivationParams, VerifyDealsForActivationReturn,
+    Method as MarketMethod, OnMinerSectorsTerminateParams, SectorDataSpec, SectorDealData,
+    SectorDeals, VerifyDealsForActivationParams, VerifyDealsForActivationReturn,
 };
 use fil_actor_miner::ext::market::ON_MINER_SECTORS_TERMINATE_METHOD;
 use fil_actor_miner::ext::power::{UPDATE_CLAIMED_POWER_METHOD, UPDATE_PLEDGE_TOTAL_METHOD};
@@ -22,9 +22,9 @@ use fil_actor_miner::{
     MinerConstructorParams as ConstructorParams, MinerInfo, Partition, PoStPartition, PowerPair,
     PreCommitSectorBatchParams, PreCommitSectorParams, ProveCommitSectorParams,
     RecoveryDeclaration, ReportConsensusFaultParams, SectorOnChainInfo, SectorPreCommitOnChainInfo,
-    SectorPreCommitOnChainInfo, Sectors, State, SubmitWindowedPoStParams, TerminateSectorsParams,
-    TerminationDeclaration, VestingFunds, WindowedPoSt, WithdrawBalanceParams,
-    WithdrawBalanceReturn, CRON_EVENT_PROVING_DEADLINE, SECTORS_AMT_BITWIDTH,
+    Sectors, State, SubmitWindowedPoStParams, TerminateSectorsParams, TerminationDeclaration,
+    VestingFunds, WindowedPoSt, WithdrawBalanceParams, WithdrawBalanceReturn,
+    CRON_EVENT_PROVING_DEADLINE, SECTORS_AMT_BITWIDTH,
 };
 use fil_actor_miner::{Method as MinerMethod, ProveCommitAggregateParams};
 use fil_actor_power::{
@@ -70,6 +70,7 @@ use multihash::derive::Multihash;
 use multihash::MultihashDigest;
 use num_traits::sign::Signed;
 
+use fil_actor_miner::ext::market;
 use fil_actor_miner::testing::{
     check_deadline_state_invariants, check_state_invariants, DeadlineStateSummary,
 };
@@ -466,29 +467,18 @@ impl ActorHarness {
                 deal_ids: sector.deal_ids.clone(),
             });
 
-            if conf.sector_weights.len() > i {
-                sector_weights.push(conf.sector_weights[i].clone());
+            if conf.sector_deal_data.len() > i {
+                sector_weights.push(conf.sector_deal_data[i].clone());
             } else {
-                sector_weights.push(SectorWeights {
-                    deal_space: 0,
-                    deal_weight: DealWeight::zero(),
-                    verified_deal_weight: DealWeight::zero(),
-                });
+                sector_weights.push(SectorDealData { commd: None });
             }
 
             // Sanity check on expectations
             let sector_has_deals = !sector.deal_ids.is_empty();
-            let deal_total_weight =
-                &sector_weights[i].deal_weight + &sector_weights[i].verified_deal_weight;
             assert_eq!(
                 sector_has_deals,
-                !deal_total_weight.is_zero(),
-                "sector deals inconsistent with configured weight"
-            );
-            assert_eq!(
-                sector_has_deals,
-                (sector_weights[i].deal_space != 0),
-                "sector deals inconsistent with configured space"
+                !sector_weights.iter().any(|dd| dd.commd.is_some()),
+                "sector deals inconsistent with result from verification"
             );
             any_deals |= sector_has_deals;
         }
@@ -579,13 +569,7 @@ impl ActorHarness {
                     deal_ids: params.deal_ids.clone(),
                 }],
             };
-            let vdreturn = VerifyDealsForActivationReturn {
-                sectors: vec![SectorWeights {
-                    deal_space: conf.deal_space as u64,
-                    deal_weight: conf.deal_weight,
-                    verified_deal_weight: conf.verified_deal_weight,
-                }],
-            };
+            let vdreturn = VerifyDealsForActivationReturn { sectors: vec![conf.0] };
 
             rt.expect_send(
                 *STORAGE_MARKET_ACTOR_ADDR,
@@ -947,14 +931,16 @@ impl ActorHarness {
             let mut expected_raw_power = BigInt::from(0);
 
             for pc in valid_pcs {
-                let pc_on_chain = self.get_precommit(rt, pc.info.sector_number);
+                let weights =
+                    cfg.deal_weights.get(&pc.info.sector_number).cloned().unwrap_or_default();
+
                 let duration = pc.info.expiration - rt.epoch;
                 if duration >= rt.policy.min_sector_expiration {
                     let qa_power_delta = qa_power_for_weight(
                         self.sector_size,
                         duration,
-                        &pc_on_chain.deal_weight,
-                        &pc_on_chain.verified_deal_weight,
+                        &weights.deal_weight,
+                        &weights.verified_deal_weight,
                     );
                     expected_qa_power += &qa_power_delta;
                     expected_raw_power += self.sector_size as u64;
@@ -965,17 +951,6 @@ impl ActorHarness {
                         &self.epoch_qa_power_smooth,
                         &rt.total_fil_circ_supply(),
                     );
-
-                    if pc_on_chain.info.replace_capacity {
-                        let replaced = self.get_sector(rt, pc_on_chain.info.replace_sector_number);
-                        // Note: following snap deals, this behavior is *strictly* deprecated;
-                        // if we get here, fail the test -- as opposed to the obsolete original
-                        // test logic that would go like this:
-                        // if replaced.initial_pledge > pledge {
-                        //     pledge = replaced.initial_pledge;
-                        // }
-                        assert!(replaced.initial_pledge <= pledge);
-                    }
 
                     expected_pledge += pledge;
                 }
@@ -2226,54 +2201,39 @@ impl PoStConfig {
 }
 
 #[derive(Default)]
-pub struct PreCommitConfig {
-    pub deal_weight: DealWeight,
-    pub verified_deal_weight: DealWeight,
-    pub deal_space: u64,
-}
+pub struct PreCommitConfig(pub SectorDealData);
 
 #[allow(dead_code)]
 impl PreCommitConfig {
     pub fn empty() -> PreCommitConfig {
-        PreCommitConfig {
-            deal_weight: DealWeight::from(0),
-            verified_deal_weight: DealWeight::from(0),
-            deal_space: 0,
-        }
+        Self::new(None)
     }
 
-    pub fn new(
-        deal_weight: DealWeight,
-        verified_deal_weight: DealWeight,
-        deal_space: SectorSize,
-    ) -> PreCommitConfig {
-        PreCommitConfig { deal_weight, verified_deal_weight, deal_space: deal_space as u64 }
+    pub fn new(commd: Option<Cid>) -> PreCommitConfig {
+        PreCommitConfig { 0: SectorDealData { commd } }
     }
 
     pub fn default() -> PreCommitConfig {
-        PreCommitConfig {
-            deal_weight: DealWeight::from(0),
-            verified_deal_weight: DealWeight::from(0),
-            deal_space: SectorSize::_2KiB as u64,
-        }
+        Self::empty()
     }
 }
 
 #[derive(Default, Clone)]
 pub struct ProveCommitConfig {
     pub verify_deals_exit: HashMap<SectorNumber, ExitCode>,
+    pub deal_weights: HashMap<SectorNumber, market::DealWeights>,
 }
 
 #[allow(dead_code)]
 impl ProveCommitConfig {
     pub fn empty() -> ProveCommitConfig {
-        ProveCommitConfig { verify_deals_exit: HashMap::new() }
+        ProveCommitConfig { verify_deals_exit: HashMap::new(), deal_weights: HashMap::new() }
     }
 }
 
 #[derive(Default)]
 pub struct PreCommitBatchConfig {
-    pub sector_weights: Vec<SectorWeights>,
+    pub sector_deal_data: Vec<SectorDealData>,
     pub first_for_miner: bool,
 }
 
