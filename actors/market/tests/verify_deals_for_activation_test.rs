@@ -121,7 +121,7 @@ fn verification_and_weights_for_verified_and_unverified_deals() {
         &mut rt,
         PROVIDER_ADDR,
         vec![SectorDeals {
-            sector_type: RegisteredSealProof::StackedDRG2KiBV1P1,
+            sector_type: RegisteredSealProof::StackedDRG8MiBV1,
             sector_expiry: SECTOR_EXPIRY,
             deal_ids: deal_ids.clone(),
         }],
@@ -296,7 +296,7 @@ fn fail_when_the_same_deal_id_is_passed_multiple_times() {
 
     let params = VerifyDealsForActivationParams {
         sectors: vec![SectorDeals {
-            sector_type: RegisteredSealProof::StackedDRG2KiBV1P1,
+            sector_type: RegisteredSealProof::StackedDRG8MiBV1,
             sector_expiry: SECTOR_EXPIRY,
             deal_ids: vec![deal_id, deal_id],
         }],
