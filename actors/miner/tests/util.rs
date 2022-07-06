@@ -2,10 +2,9 @@
 
 use fil_actor_account::Method as AccountMethod;
 use fil_actor_market::{
-    ActivateDealsParams, ActivateDealsResult, ComputeDataCommitmentParams,
-    ComputeDataCommitmentReturn, DealWeights, Method as MarketMethod,
-    OnMinerSectorsTerminateParams, SectorDataSpec, SectorDealData, SectorDeals,
-    VerifyDealsForActivationParams, VerifyDealsForActivationReturn,
+    ActivateDealsParams, ActivateDealsResult, DealWeights, Method as MarketMethod,
+    OnMinerSectorsTerminateParams, SectorDealData, SectorDeals, VerifyDealsForActivationParams,
+    VerifyDealsForActivationReturn,
 };
 use fil_actor_miner::ext::market::ON_MINER_SECTORS_TERMINATE_METHOD;
 use fil_actor_miner::ext::power::{UPDATE_CLAIMED_POWER_METHOD, UPDATE_PLEDGE_TOTAL_METHOD};
@@ -320,18 +319,19 @@ impl ActorHarness {
             let sector_no = self.next_sector_no;
             let sector_deal_ids =
                 deal_ids.get(i).and_then(|ids| Some(ids.clone())).unwrap_or_default();
+            let has_deals = !sector_deal_ids.is_empty();
             let params = self.make_pre_commit_params(
                 sector_no,
                 precommit_epoch - 1,
                 expiration,
                 sector_deal_ids,
             );
-            let precommit = self.pre_commit_sector_and_get(
-                rt,
-                params,
-                PreCommitConfig::default(),
-                first && i == 0,
-            );
+            let pcc = if !has_deals {
+                PreCommitConfig::new(None)
+            } else {
+                PreCommitConfig::new(Some(make_piece_cid("1".as_bytes())))
+            };
+            let precommit = self.pre_commit_sector_and_get(rt, params, pcc, first && i == 0);
             precommits.push(precommit);
             self.next_sector_no += 1;
         }
@@ -696,25 +696,11 @@ impl ActorHarness {
         pc: &SectorPreCommitOnChainInfo,
         params: ProveCommitSectorParams,
     ) -> Result<(), ActorError> {
-        let commd = make_piece_cid(b"commd");
         let seal_rand = Randomness(vec![1, 2, 3, 4]);
         let seal_int_rand = Randomness(vec![5, 6, 7, 8]);
         let interactive_epoch = pc.pre_commit_epoch + rt.policy.pre_commit_challenge_delay;
 
         // Prepare for and receive call to ProveCommitSector
-        let input =
-            SectorDataSpec { deal_ids: pc.info.deal_ids.clone(), sector_type: pc.info.seal_proof };
-        let cdc_params = ComputeDataCommitmentParams { inputs: vec![input] };
-        let cdc_ret = ComputeDataCommitmentReturn { commds: vec![commd] };
-        rt.expect_send(
-            *STORAGE_MARKET_ACTOR_ADDR,
-            MarketMethod::ComputeDataCommitment as u64,
-            RawBytes::serialize(cdc_params).unwrap(),
-            TokenAmount::from(0u8),
-            RawBytes::serialize(cdc_ret).unwrap(),
-            ExitCode::OK,
-        );
-
         let entropy = RawBytes::serialize(self.receiver).unwrap();
         rt.expect_get_randomness_from_tickets(
             DomainSeparationTag::SealRandomness,
@@ -738,7 +724,7 @@ impl ActorHarness {
             deal_ids: pc.info.deal_ids.clone(),
             randomness: seal_rand,
             interactive_randomness: seal_int_rand,
-            unsealed_cid: commd,
+            unsealed_cid: pc.info.unsealed_cid.get_cid(pc.info.seal_proof).unwrap(),
         };
         rt.expect_send(
             *STORAGE_POWER_ACTOR_ADDR,
