@@ -477,7 +477,7 @@ impl ActorHarness {
             let sector_has_deals = !sector.deal_ids.is_empty();
             assert_eq!(
                 sector_has_deals,
-                !sector_weights.iter().any(|dd| dd.commd.is_some()),
+                conf.sector_deal_data.get(i).is_some(),
                 "sector deals inconsistent with result from verification"
             );
             any_deals |= sector_has_deals;
