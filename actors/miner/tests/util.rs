@@ -2,9 +2,10 @@
 
 use fil_actor_account::Method as AccountMethod;
 use fil_actor_market::{
-    ActivateDealsParams, ComputeDataCommitmentParams, ComputeDataCommitmentReturn,
-    Method as MarketMethod, OnMinerSectorsTerminateParams, SectorDataSpec, SectorDealData,
-    SectorDeals, VerifyDealsForActivationParams, VerifyDealsForActivationReturn,
+    ActivateDealsParams, ActivateDealsResult, ComputeDataCommitmentParams,
+    ComputeDataCommitmentReturn, DealWeights, Method as MarketMethod,
+    OnMinerSectorsTerminateParams, SectorDataSpec, SectorDealData, SectorDeals,
+    VerifyDealsForActivationParams, VerifyDealsForActivationReturn,
 };
 use fil_actor_miner::ext::market::ON_MINER_SECTORS_TERMINATE_METHOD;
 use fil_actor_miner::ext::power::{UPDATE_CLAIMED_POWER_METHOD, UPDATE_PLEDGE_TOTAL_METHOD};
@@ -70,7 +71,6 @@ use multihash::derive::Multihash;
 use multihash::MultihashDigest;
 use num_traits::sign::Signed;
 
-use fil_actor_miner::ext::market;
 use fil_actor_miner::testing::{
     check_deadline_state_invariants, check_state_invariants, DeadlineStateSummary,
 };
@@ -766,28 +766,11 @@ impl ActorHarness {
         params: ProveCommitAggregateParams,
         base_fee: BigInt,
     ) -> Result<(), ActorError> {
-        // recieve call to ComputeDataCommittments
-        let mut comm_ds = Vec::new();
-        let mut cdc_inputs = Vec::new();
-        for (i, precommit) in precommits.iter().enumerate() {
-            let sector_data = SectorDataSpec {
-                deal_ids: precommit.info.deal_ids.clone(),
-                sector_type: precommit.info.seal_proof,
-            };
-            cdc_inputs.push(sector_data);
-            let comm_d = make_piece_cid(format!("commd-{}", i).as_bytes());
-            comm_ds.push(comm_d);
-        }
-        let cdc_params = ComputeDataCommitmentParams { inputs: cdc_inputs };
-        let cdc_ret = ComputeDataCommitmentReturn { commds: comm_ds.clone() };
-        rt.expect_send(
-            *STORAGE_MARKET_ACTOR_ADDR,
-            MarketMethod::ComputeDataCommitment as u64,
-            RawBytes::serialize(cdc_params)?,
-            BigInt::zero(),
-            RawBytes::serialize(cdc_ret)?,
-            ExitCode::OK,
-        );
+        let comm_ds: Vec<_> = precommits
+            .iter()
+            .map(|pc| pc.info.unsealed_cid.get_cid(pc.info.seal_proof).unwrap())
+            .collect();
+
         self.expect_query_network_info(rt);
 
         // expect randomness queries for provided precommits
@@ -912,12 +895,20 @@ impl ActorHarness {
                     }
                 }
 
+                let ret = ActivateDealsResult {
+                    weights: cfg
+                        .deal_weights
+                        .get(&pc.info.sector_number)
+                        .cloned()
+                        .unwrap_or_default(),
+                };
+
                 rt.expect_send(
                     *STORAGE_MARKET_ACTOR_ADDR,
                     MarketMethod::ActivateDeals as u64,
                     RawBytes::serialize(params).unwrap(),
                     TokenAmount::from(0u8),
-                    RawBytes::default(),
+                    RawBytes::serialize(ret).unwrap(),
                     exit,
                 );
             } else {
@@ -2221,7 +2212,7 @@ impl PreCommitConfig {
 #[derive(Default, Clone)]
 pub struct ProveCommitConfig {
     pub verify_deals_exit: HashMap<SectorNumber, ExitCode>,
-    pub deal_weights: HashMap<SectorNumber, market::DealWeights>,
+    pub deal_weights: HashMap<SectorNumber, DealWeights>,
 }
 
 #[allow(dead_code)]
