@@ -6,10 +6,11 @@ use fil_actor_market::{
 };
 use fil_actor_miner::{
     aggregate_pre_commit_network_fee, max_prove_commit_duration,
-    new_deadline_info_from_offset_and_epoch, Deadline, DeadlineInfo, DeclareFaultsRecoveredParams,
-    Method as MinerMethod, PoStPartition, PowerPair, PreCommitSectorBatchParams,
-    PreCommitSectorParams, ProveCommitAggregateParams, RecoveryDeclaration, SectorOnChainInfo,
-    SectorPreCommitOnChainInfo, State as MinerState, SubmitWindowedPoStParams,
+    new_deadline_info_from_offset_and_epoch, ChangeBeneficiaryParams, Deadline, DeadlineInfo,
+    DeclareFaultsRecoveredParams, GetBeneficiaryReturn, Method as MinerMethod, PoStPartition,
+    PowerPair, PreCommitSectorBatchParams, PreCommitSectorParams, ProveCommitAggregateParams,
+    RecoveryDeclaration, SectorOnChainInfo, SectorPreCommitOnChainInfo, State as MinerState,
+    SubmitWindowedPoStParams, WithdrawBalanceParams, WithdrawBalanceReturn,
 };
 use fil_actor_multisig::Method as MultisigMethod;
 use fil_actor_multisig::ProposeParams;
@@ -495,6 +496,47 @@ pub fn submit_windowed_post(
         ..Default::default()
     }
     .matches(v.take_invocations().last().unwrap());
+}
+
+pub fn change_beneficiary(
+    v: &VM,
+    from: Address,
+    maddr: Address,
+    beneficiary_change_proposal: &ChangeBeneficiaryParams,
+) {
+    apply_ok(
+        v,
+        from,
+        maddr,
+        TokenAmount::zero(),
+        MinerMethod::ChangeBeneficiary as u64,
+        beneficiary_change_proposal.clone(),
+    );
+}
+
+pub fn get_beneficiary(v: &VM, from: Address, m_addr: Address) -> GetBeneficiaryReturn {
+    apply_ok(
+        v,
+        from,
+        m_addr,
+        TokenAmount::zero(),
+        MinerMethod::GetBeneficiary as u64,
+        RawBytes::default(),
+    )
+    .deserialize()
+    .unwrap()
+}
+
+pub fn withdraw_balance(
+    v: &VM,
+    from: Address,
+    m_addr: Address,
+    amount_requested: TokenAmount,
+) -> WithdrawBalanceReturn {
+    let params = WithdrawBalanceParams { amount_requested };
+    apply_ok(v, from, m_addr, TokenAmount::zero(), MinerMethod::WithdrawBalance as u64, params)
+        .deserialize()
+        .unwrap()
 }
 
 pub fn submit_invalid_post(
