@@ -933,7 +933,7 @@ impl<'invocation, 'bs> Runtime<&'bs MemoryBlockstore> for InvocationCtx<'invocat
         self.top.circ_supply.clone()
     }
 
-    fn charge_gas(&mut self, _name: &'static str, _compute: i64) {}
+    fn charge_gas(&self, _name: &'static str, _compute: i64) {}
 
     fn base_fee(&self) -> TokenAmount {
         TokenAmount::zero()

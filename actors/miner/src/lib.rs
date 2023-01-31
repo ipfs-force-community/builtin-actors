@@ -447,6 +447,7 @@ impl Actor {
             }
         }
 
+        rt.charge_gas("params check", 0);
         let post_result = rt.transaction(|state: &mut State, rt| {
             let info = get_miner_info(rt.store(), state)?;
 
@@ -486,7 +487,7 @@ impl Actor {
                     max_size
                 ));
             }
-
+            rt.charge_gas("proof check", 0);
             // Validate that the miner didn't try to prove too many partitions at once.
             let submission_partition_limit =
                 load_partitions_sectors_max(rt.policy(), info.window_post_partition_sectors);
@@ -499,7 +500,7 @@ impl Actor {
                 ));
             }
             let current_deadline = state.deadline_info(rt.policy(), current_epoch);
-
+            rt.charge_gas("load load_partitions_sectors", 0);
             // Check that the miner state indicates that the current proving deadline has started.
             // This should only fail if the cron actor wasn't invoked, and matters only in case that it hasn't been
             // invoked for a whole proving period, and hence the missed PoSt submissions from the prior occurrence
@@ -557,9 +558,11 @@ impl Actor {
             let sectors = Sectors::load(rt.store(), &state.sectors).map_err(|e| {
                 e.downcast_default(ExitCode::USR_ILLEGAL_STATE, "failed to load sectors")
             })?;
+            rt.charge_gas("load sectors load", 0);
 
             let mut deadlines =
                 state.load_deadlines(rt.store()).map_err(|e| e.wrap("failed to load deadlines"))?;
+            rt.charge_gas("load_deadlines load", 0);
 
             let mut deadline =
                 deadlines.load_deadline(rt.policy(), rt.store(), params.deadline).map_err(|e| {
@@ -568,7 +571,7 @@ impl Actor {
                         format!("failed to load deadline {}", params.deadline),
                     )
                 })?;
-
+            rt.charge_gas("load_deadline single load", 0);
             // Record proven sectors/partitions, returning updates to power and the final set of sectors
             // proven/skipped.
             //
@@ -598,7 +601,7 @@ impl Actor {
                         ),
                     )
                 })?;
-
+            rt.charge_gas("record_proven_sectors", 0);
             // Make sure we actually proved something.
             let proven_sectors = &post_result.sectors - &post_result.ignored_sectors;
             if proven_sectors.is_empty() {
@@ -645,6 +648,8 @@ impl Actor {
                 }
             }
 
+            rt.charge_gas("check recovered_power", 0);
+
             let deadline_idx = params.deadline;
             deadlines.update_deadline(policy, rt.store(), params.deadline, &deadline).map_err(
                 |e| {
@@ -655,10 +660,12 @@ impl Actor {
                 },
             )?;
 
+            rt.charge_gas("update_deadline", 0);
             state.save_deadlines(rt.store(), deadlines).map_err(|e| {
                 e.downcast_default(ExitCode::USR_ILLEGAL_STATE, "failed to save deadlines")
             })?;
 
+            rt.charge_gas("save_deadlines", 0);
             Ok(post_result)
         })?;
 
@@ -667,6 +674,7 @@ impl Actor {
         // additional accounting state.
         // https://github.com/filecoin-project/specs-actors/issues/414
         request_update_power(rt, post_result.power_delta)?;
+        rt.charge_gas("request_update_power", 0);
 
         let state: State = rt.state()?;
         state.check_balance_invariants(&rt.current_balance()).map_err(balance_invariants_broken)?;

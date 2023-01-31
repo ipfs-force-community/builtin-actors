@@ -370,7 +370,7 @@ where
         fvm::network::total_fil_circ_supply()
     }
 
-    fn charge_gas(&mut self, name: &'static str, compute: i64) {
+    fn charge_gas(&self, name: &'static str, compute: i64) {
         fvm::gas::charge(name, compute as u64)
     }
 

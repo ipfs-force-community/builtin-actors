@@ -163,7 +163,7 @@ pub trait Runtime<BS: Blockstore>: Primitives + Verifier + RuntimePolicy {
 
     /// ChargeGas charges specified amount of `gas` for execution.
     /// `name` provides information about gas charging point
-    fn charge_gas(&mut self, name: &'static str, compute: i64);
+    fn charge_gas(&self, name: &'static str, compute: i64);
 
     fn base_fee(&self) -> TokenAmount;
 }

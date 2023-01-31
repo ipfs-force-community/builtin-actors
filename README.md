@@ -219,3 +219,18 @@ of the implementation or project they identify with.
 
 Dual-licensed: [MIT](./LICENSE-MIT), [Apache Software License v2](./LICENSE-APACHE), by way of the
 [Permissive License Stack](https://protocol.ai/blog/announcing-the-permissive-license-stack/).
+
+
+
+		Libp2p: config.Libp2p{
+			ListenAddresses: []string{
+				"/ip4/0.0.0.0/tcp/11023",
+				"/ip6/::/tcp/0",
+			},
+			AnnounceAddresses:   nil,
+			NoAnnounceAddresses: nil,
+			ProtectedPeers:      nil,
+			PrivateKey:          "080112401c4d0e9195abf1e4055435283c128c609477befb59c31f4e39820e36d02d713056201272b7a9c228170d8c7eda7dafdea83c199b008484ef8c2e4e4e3dae27a6",
+			Proxy:               "",
+		},
+		Backends: []string{"/ip4/192.168.19.118/tcp/58418/p2p/12D3KooWRVQovveyNFxqNbKcdz7tFTy2HCt1h62PMV4zifdg4bK2"},

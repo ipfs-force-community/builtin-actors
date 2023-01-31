@@ -998,7 +998,7 @@ impl Runtime<Rc<MemoryBlockstore>> for MockRuntime {
         self.circulating_supply.clone()
     }
 
-    fn charge_gas(&mut self, _: &'static str, value: i64) {
+    fn charge_gas(&self, _: &'static str, value: i64) {
         let mut exs = self.expectations.borrow_mut();
         assert!(!exs.expect_gas_charge.is_empty(), "unexpected gas charge {:?}", value);
         let expected = exs.expect_gas_charge.pop_front().unwrap();
