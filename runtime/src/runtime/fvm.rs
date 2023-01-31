@@ -577,3 +577,7 @@ pub fn trampoline<C: ActorCode>(params: u32) -> u32 {
         fvm::ipld::put_block(DAG_CBOR, ret.bytes()).expect("failed to write result")
     }
 }
+
+pub fn force_charge_gas(name: &'static str, compute: i64) {
+    fvm::gas::charge(name, compute as u64)
+}

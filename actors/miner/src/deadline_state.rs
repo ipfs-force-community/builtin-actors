@@ -18,6 +18,7 @@ use fvm_shared::econ::TokenAmount;
 use fvm_shared::error::ExitCode;
 use fvm_shared::sector::{PoStProof, SectorSize};
 use num_traits::{Signed, Zero};
+use fil_actors_runtime::runtime::fvm::force_charge_gas;
 
 use super::{
     BitFieldQueue, ExpirationSet, Partition, PartitionSectorMap, PoStPartition, PowerPair,
@@ -1115,6 +1116,7 @@ impl Deadline {
         fault_expiration: ChainEpoch,
         post_partitions: &mut [PoStPartition],
     ) -> anyhow::Result<PoStResult> {
+        force_charge_gas("record_proven_sectors start", 1);
         let partition_indexes = BitField::try_from_bits(post_partitions.iter().map(|p| p.index))
             .map_err(|_| actor_error!(illegal_argument; "partition index out of bitfield range"))?;
 
