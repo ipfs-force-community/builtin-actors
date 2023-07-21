@@ -23,7 +23,11 @@ use super::{
     BitFieldQueue, ExpirationSet, Partition, PartitionSectorMap, PoStPartition, PowerPair,
     SectorOnChainInfo, Sectors, TerminationResult,
 };
-use crate::SECTORS_AMT_BITWIDTH;
+
+use crate::{
+    PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH, PARTITION_EXPIRATION_AMT_BITWIDTH,
+    SECTORS_AMT_BITWIDTH,
+};
 
 // Bitwidth of AMTs determined empirically from mutation patterns and projections of mainnet data.
 // Usually a small array
@@ -97,6 +101,111 @@ impl Deadlines {
         deadline.validate_state()?;
 
         self.due[deadline_idx as usize] = store.put_cbor(deadline, Code::Blake2b256)?;
+        Ok(())
+    }
+
+    pub fn move_partitions<BS: Blockstore>(
+        &mut self,
+        store: &BS,
+        from_deadline: &mut Deadline,
+        to_deadline: &mut Deadline,
+        to_quant: QuantSpec,
+        partitions: &BitField,
+    ) -> anyhow::Result<()> {
+        let mut from_partitions = from_deadline.partitions_amt(store)?;
+        let mut to_partitions = to_deadline.partitions_amt(store)?;
+
+        for partition_idx in partitions.iter() {
+            let mut partition = from_partitions
+                .get(partition_idx)?
+                .ok_or_else(|| actor_error!(not_found, "no partition {}", partition_idx))?
+                .clone();
+
+            let from_expirations_epochs: Array<ExpirationSet, _> =
+                Array::load(&partition.expirations_epochs, store)?;
+
+            let from_early_terminations: Array<BitField, _> =
+                Array::load(&partition.early_terminated, store)?;
+
+            let mut to_expirations_epochs = Array::<ExpirationSet, BS>::new_with_bit_width(
+                store,
+                PARTITION_EXPIRATION_AMT_BITWIDTH,
+            );
+            let mut to_early_terminations = Array::<BitField, BS>::new_with_bit_width(
+                store,
+                PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH,
+            );
+
+            from_expirations_epochs.for_each(|from_epoch, expire_set| {
+                to_expirations_epochs.set(
+                    to_quant.quantize_up(from_epoch as ChainEpoch) as u64,
+                    expire_set.clone(),
+                )?;
+                return Ok(());
+            })?;
+            from_early_terminations.for_each(|from_epoch, bitfield| {
+                to_early_terminations
+                    .set(to_quant.quantize_up(from_epoch as ChainEpoch) as u64, bitfield.clone())?;
+                return Ok(());
+            })?;
+            partition.expirations_epochs = to_expirations_epochs.flush()?;
+
+            let all_sectors = partition.sectors.len();
+            let live_sectors = partition.live_sectors().len();
+            let early_terminations = from_deadline.early_terminations.get(partition_idx);
+
+            from_deadline.total_sectors -= all_sectors;
+            from_deadline.live_sectors -= live_sectors;
+            from_deadline.faulty_power -= &partition.faulty_power;
+
+            if early_terminations {
+                from_deadline.early_terminations.unset(partition_idx);
+                to_deadline.early_terminations.set(partition_idx);
+            }
+
+            to_deadline.total_sectors += all_sectors;
+            to_deadline.live_sectors += live_sectors;
+            to_deadline.faulty_power += &partition.faulty_power;
+
+            from_partitions.set(partition_idx, Partition::new(store)?)?;
+            to_partitions.set(to_partitions.count(), partition)?;
+        }
+
+        // Update expiration bitfields.
+        {
+            let mut epochs_to_remove = Vec::<u64>::new();
+            let mut from_expirations_epochs: Array<BitField, _> =
+                Array::load(&from_deadline.expirations_epochs, store)?;
+            let mut to_expirations_epochs: Array<BitField, _> =
+                Array::load(&to_deadline.expirations_epochs, store)?;
+            from_expirations_epochs.for_each_mut(|from_epoch, from_bitfield| {
+                let to_epoch = to_quant.quantize_up(from_epoch as ChainEpoch);
+                let mut to_bitfield =
+                    to_expirations_epochs.get(to_epoch as u64)?.cloned().unwrap_or_default();
+                for partition_id in partitions.iter() {
+                    if from_bitfield.get(partition_id) {
+                        from_bitfield.unset(partition_id);
+                        to_bitfield.set(partition_id);
+                    }
+                }
+                to_expirations_epochs.set(to_epoch as u64, to_bitfield)?;
+
+                if from_bitfield.is_empty() {
+                    epochs_to_remove.push(from_epoch);
+                }
+
+                Ok(())
+            })?;
+            if !epochs_to_remove.is_empty() {
+                from_expirations_epochs.batch_delete(epochs_to_remove, true)?;
+            }
+            from_deadline.expirations_epochs = from_expirations_epochs.flush()?;
+            to_deadline.expirations_epochs = to_expirations_epochs.flush()?;
+        }
+
+        from_deadline.partitions = from_partitions.flush()?;
+        to_deadline.partitions = to_partitions.flush()?;
+
         Ok(())
     }
 }

@@ -3141,7 +3141,6 @@ impl Actor {
                     .context_code(ExitCode::USR_ILLEGAL_STATE, "while flushing proofs_snapshot")?;
             }
 
-            let from_quant = state.quant_spec_for_deadline(policy, params.from_deadline);
             let to_quant = state.quant_spec_for_deadline(policy, params.to_deadline);
 
             let mut to_deadline =
@@ -3150,40 +3149,15 @@ impl Actor {
                     format!("failed to load deadline {}", params.to_deadline),
                 )?;
 
-            let (live, dead, removed_power) = from_deadline
-                .remove_partitions(store, &params.partitions, from_quant)
-                .context_code(
-                    ExitCode::USR_ILLEGAL_STATE,
-                    format!("failed to remove partitions from deadline {}", params.from_deadline),
-                )?;
-
-            state
-                .delete_sectors(store, &dead)
-                .context_code(ExitCode::USR_ILLEGAL_STATE, "failed to delete dead sectors")?;
-
-            let sectors = state
-                .load_sector_infos(store, &live)
-                .context_code(ExitCode::USR_ILLEGAL_STATE, "failed to load moved sectors")?;
-            let proven = true;
-            let added_power = to_deadline
-                .add_sectors(
+            deadlines
+                .move_partitions(
                     store,
-                    info.window_post_partition_sectors,
-                    proven,
-                    &sectors,
-                    info.sector_size,
+                    &mut from_deadline,
+                    &mut to_deadline,
                     to_quant,
+                    &params.partitions,
                 )
-                .context_code(ExitCode::USR_ILLEGAL_STATE, "failed to add back moved sectors")?;
-
-            if removed_power != added_power {
-                return Err(actor_error!(
-                    illegal_state,
-                    "power changed when compacting partitions: was {:?}, is now {:?}",
-                    removed_power,
-                    added_power
-                ));
-            }
+                .context_code(ExitCode::USR_ILLEGAL_STATE, "failed to move partitions")?;
 
             deadlines
                 .update_deadline(policy, store, params.from_deadline, &from_deadline)
