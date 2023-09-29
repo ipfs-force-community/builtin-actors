@@ -18,6 +18,7 @@ use fvm_shared::sector::{
 use fvm_shared::smooth::FilterEstimate;
 
 use fil_actors_runtime::DealWeight;
+use serde::{Deserialize, Serialize};
 
 use crate::commd::CompactCommD;
 use crate::ext::verifreg::ClaimID;
@@ -244,6 +245,13 @@ pub struct CompactPartitionsParams {
 }
 
 #[derive(Serialize_tuple, Deserialize_tuple)]
+pub struct MovePartitionsParams {
+    pub orig_deadline: u64,
+    pub dest_deadline: u64,
+    pub partitions: BitField,
+}
+
+#[derive(Serialize_tuple, Deserialize_tuple)]
 pub struct CompactSectorNumbersParams {
     pub mask_sector_numbers: BitField,
 }
@@ -357,8 +365,17 @@ pub struct SectorOnChainInfo {
     pub replaced_day_reward: TokenAmount,
     /// The original SealedSectorCID, only gets set on the first ReplicaUpdate
     pub sector_key_cid: Option<Cid>,
-    // Flag for QA power mechanism introduced in fip 0045
-    pub simple_qa_power: bool,
+    /// Additional flags, see [`SectorOnChainInfoFlags`]
+    pub flags: SectorOnChainInfoFlags,
+}
+
+bitflags::bitflags! {
+    #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+    #[serde(transparent)]
+    pub struct SectorOnChainInfoFlags: u32 {
+        /// QA power mechanism introduced in FIP-0045
+        const SIMPLE_QA_POWER = 0x1;
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize_tuple, Deserialize_tuple)]
