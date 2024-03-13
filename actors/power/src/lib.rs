@@ -22,13 +22,15 @@ use ext::init;
 use fil_actors_runtime::runtime::builtins::Type;
 use fil_actors_runtime::runtime::{ActorCode, Runtime};
 use fil_actors_runtime::{
-    actor_dispatch, actor_error, deserialize_block, extract_send_result, ActorDowncast, ActorError,
+    actor_dispatch, actor_error, ActorContext, deserialize_block, extract_send_result, ActorDowncast, ActorError,
     Multimap, CRON_ACTOR_ADDR, INIT_ACTOR_ADDR, REWARD_ACTOR_ADDR, SYSTEM_ACTOR_ADDR,
 };
+
 
 pub use self::policy::*;
 pub use self::state::*;
 pub use self::types::*;
+
 
 #[cfg(feature = "fil-actor")]
 fil_actors_runtime::wasm_trampoline!(Actor);
@@ -39,6 +41,8 @@ mod policy;
 mod state;
 pub mod testing;
 mod types;
+
+
 
 // * Updated to specs-actors commit: 999e57a151cc7ada020ca2844b651499ab8c0dec (v3.0.1)
 
@@ -94,7 +98,11 @@ impl Actor {
     ) -> Result<CreateMinerReturn, ActorError> {
         rt.validate_immediate_caller_accept_any()?;
         let value = rt.message().value_received();
-
+        let policy = rt.policy();
+        if rt.current_balance() < policy.new_miner_deposit {
+            return Err(actor_error!(illegal_argument, "The current balance of {} is not sufficient to cover the deposit fee of {} for new miners.",
+            rt.current_balance(),policy.new_miner_deposit));
+        }
         let constructor_params = RawBytes::serialize(ext::miner::MinerConstructorParams {
             owner: params.owner,
             worker: params.worker,
@@ -116,6 +124,7 @@ impl Actor {
                 value,
             ))?)?;
 
+       
         let window_post_proof_type = params.window_post_proof_type;
         rt.transaction(|st: &mut State, rt| {
             let mut claims = st.load_claims(rt.store())?;
@@ -129,7 +138,6 @@ impl Actor {
                 },
             )?;
             st.miner_count += 1;
-            st.add_pledge_total(rt.policy().new_miner_deposit.clone());
             st.update_stats_for_new_miner(rt.policy(), window_post_proof_type).map_err(|e| {
                 actor_error!(
                     illegal_state,
@@ -138,10 +146,22 @@ impl Actor {
                     e
                 )
             })?;
-
             st.save_claims(&mut claims)?;
             Ok(())
         })?;
+        let reward_params = fil_actor_reward::ext::miner::ApplyRewardParams { reward: policy.new_miner_deposit.clone(), penalty: TokenAmount::zero()};
+        let miner_id = rt
+            .resolve_address(&params.owner)
+            .ok_or_else(|| actor_error!(not_found, "failed to resolve given owner address"))?;
+
+        let ret = extract_send_result(rt.send_simple(
+            &id_address,
+            fil_actor_reward::ext::miner::APPLY_REWARDS_METHOD,
+            IpldBlock::serialize_cbor(&reward_params)?,
+            policy.new_miner_deposit.clone(),
+        ))
+        .context(format!("failed to save the deposit to locked fund"))?;
+
         Ok(CreateMinerReturn { id_address, robust_address })
     }
 

@@ -46,7 +46,7 @@ use fil_actor_market::{
     VerifyDealsForActivationParams, VerifyDealsForActivationReturn,
 };
 use fil_actor_miner::ext::market::ON_MINER_SECTORS_TERMINATE_METHOD;
-use fil_actor_miner::ext::power::{UPDATE_CLAIMED_POWER_METHOD, UPDATE_PLEDGE_TOTAL_METHOD};
+use ext::power::{UPDATE_CLAIMED_POWER_METHOD, UPDATE_PLEDGE_TOTAL_METHOD};
 use fil_actor_miner::ext::verifreg::CLAIM_ALLOCATIONS_METHOD;
 use fil_actor_miner::ext::verifreg::{
     Claim as FILPlusClaim, ClaimID, GetClaimsParams, GetClaimsReturn,
@@ -1661,7 +1661,7 @@ impl ActorHarness {
         caller_addrs
     }
 
-    pub fn apply_rewards(&self, rt: &MockRuntime, amt: TokenAmount, penalty: TokenAmount) {
+    pub fn apply_rewards(&self, rt: &MockRuntime, amt: TokenAmount, penalty: TokenAmount) {        
         // This harness function does not handle the state where apply rewards is
         // on a miner with existing fee debt.  This state is not protocol reachable
         // because currently fee debt prevents election participation.

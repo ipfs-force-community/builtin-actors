@@ -188,10 +188,7 @@ impl Actor {
             .collect::<Result<_, _>>()?;
 
         let policy = rt.policy();
-        if rt.current_balance() < policy.new_miner_deposit {
-            return Err(actor_error!(illegal_argument, "not enough miner deposit"));
-        }
-
+ 
         let current_epoch = rt.curr_epoch();
         let blake2b = |b: &[u8]| rt.hash_blake2b(b);
         let offset =
@@ -234,28 +231,12 @@ impl Actor {
             e.downcast_default(ExitCode::USR_ILLEGAL_STATE, "failed to construct illegal state")
         })?;
 
-        let mut st =
+        let st =
             State::new(policy, rt.store(), info_cid, period_start, deadline_idx).map_err(|e| {
                 e.downcast_default(ExitCode::USR_ILLEGAL_STATE, "failed to construct state")
             })?;
 
-        let (new_miner_deposit_to_lock, locked_new_miner_deposit_vesting_spec) =
-            locked_new_miner_deposit(policy.new_miner_deposit.clone());
-
-        _ = st
-            .add_locked_funds(
-                rt.store(),
-                current_epoch,
-                &new_miner_deposit_to_lock,
-                locked_new_miner_deposit_vesting_spec,
-            )
-            .map_err(|e| {
-                actor_error!(
-                    illegal_state,
-                    "failed to lock new miner deposit in vesting table: {}",
-                    e
-                )
-            })?;
+ 
         rt.create(&st)?;
         Ok(())
     }

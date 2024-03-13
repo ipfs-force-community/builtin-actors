@@ -29,7 +29,7 @@ serde = { workspace = true }
 anyhow = { workspace = true }
 fvm_ipld_blockstore = { workspace = true }
 fvm_ipld_encoding = { workspace = true }
-
+fil_actor_reward = { workspace = true }
 [dev-dependencies]
 fil_actors_runtime = { workspace = true, features = ["test_utils", "sector-default"] }
 fil_actor_reward = { workspace = true }
