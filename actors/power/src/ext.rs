@@ -35,9 +35,12 @@ pub mod init {
 
 pub mod miner {
     use super::*;
+    use fvm_shared::econ::TokenAmount;
 
     pub const CONFIRM_SECTOR_PROOFS_VALID_METHOD: u64 = 17;
     pub const ON_DEFERRED_CRON_EVENT_METHOD: u64 = 12;
+    pub const LOCK_CREATE_MINER_DESPOIT_METHOD: u64 =
+        frc42_dispatch::method_hash!("LockCreateMinerDeposit");
 
     #[derive(Serialize_tuple, Deserialize_tuple)]
     pub struct ConfirmSectorProofsParams {
@@ -59,6 +62,16 @@ pub mod miner {
         pub multi_addresses: Vec<BytesDe>,
     }
 
+    /// Copy from miner
+    ///
+    /// Network inputs to calculation of sector pledge and associated parameters.
+    pub struct MinerNetworkPledgeInputs {
+        pub network_qap: FilterEstimate,
+        pub network_baseline: StoragePower,
+        pub circulating_supply: TokenAmount,
+        pub epoch_reward: FilterEstimate,
+    }
+
     #[derive(Serialize_tuple, Deserialize_tuple)]
     pub struct DeferredCronEventParams {
         #[serde(with = "strict_bytes")]
@@ -66,11 +79,17 @@ pub mod miner {
         pub reward_smoothed: FilterEstimate,
         pub quality_adj_power_smoothed: FilterEstimate,
     }
+
+    #[derive(Serialize_tuple, Deserialize_tuple)]
+    pub struct LockCreateMinerDepositParams {
+        pub amount: TokenAmount,
+    }
 }
 
 pub mod reward {
     use super::*;
 
+    pub const THIS_EPOCH_REWARD_METHOD: u64 = 3;
     pub const UPDATE_NETWORK_KPI: u64 = 4;
 
     #[derive(FromPrimitive)]
