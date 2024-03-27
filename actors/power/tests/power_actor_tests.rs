@@ -1,14 +1,20 @@
 use fil_actor_power::ext::init::{ExecParams, EXEC_METHOD};
-use fil_actor_power::ext::miner::MinerConstructorParams;
+use fil_actor_power::ext::miner::{
+    LockCreateMinerDepositParams, MinerConstructorParams, LOCK_CREATE_MINER_DESPOIT_METHOD,
+};
+use fil_actor_power::ext::reward::THIS_EPOCH_REWARD_METHOD;
+use fil_actor_reward::ThisEpochRewardReturn;
 use fil_actors_runtime::runtime::builtins::Type;
 use fil_actors_runtime::test_utils::{
     expect_abort, expect_abort_contains_message, ACCOUNT_ACTOR_CODE_ID, EVM_ACTOR_CODE_ID,
     MINER_ACTOR_CODE_ID, SYSTEM_ACTOR_CODE_ID,
 };
+use fil_actors_runtime::REWARD_ACTOR_ADDR;
 use fil_actors_runtime::{runtime::Policy, INIT_ACTOR_ADDR};
 use fvm_ipld_encoding::{BytesDe, RawBytes};
 use fvm_shared::address::Address;
 use fvm_shared::bigint::bigint_ser::BigIntSer;
+use fvm_shared::bigint::BigInt;
 use fvm_shared::clock::ChainEpoch;
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::error::ExitCode;
@@ -44,9 +50,6 @@ fn create_miner() {
     let peer = "miner".as_bytes().to_vec();
     let multiaddrs = vec![BytesDe("multiaddr".as_bytes().to_vec())];
 
-    let deposit = TokenAmount::from_atto(320);
-    let value = TokenAmount::from_atto(10) + deposit;
-
     h.create_miner(
         &rt,
         &OWNER,
@@ -56,7 +59,7 @@ fn create_miner() {
         peer,
         multiaddrs,
         RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
-        &value,
+        &TokenAmount::from_atto(10),
     )
     .unwrap();
 
@@ -99,9 +102,23 @@ fn create_miner_given_send_to_init_actor_fails_should_fail() {
 
     // owner send CreateMiner to Actor
     rt.set_caller(*ACCOUNT_ACTOR_CODE_ID, *OWNER);
-    rt.value_received.replace(TokenAmount::from_atto(10));
-    rt.set_balance(TokenAmount::from_atto(10));
+    rt.value_received.replace(TokenAmount::from_atto(330));
+    rt.set_balance(TokenAmount::from_atto(330));
     rt.expect_validate_caller_any();
+
+    // set request current epoch block reward expectation
+    let request_this_epoch_reward_ret = fil_actor_reward::ThisEpochRewardReturn {
+        this_epoch_reward_smoothed: Default::default(),
+        this_epoch_baseline_power: fvm_shared::bigint::BigInt::zero(),
+    };
+    rt.expect_send_simple(
+        REWARD_ACTOR_ADDR,
+        THIS_EPOCH_REWARD_METHOD,
+        Default::default(),
+        TokenAmount::zero(),
+        IpldBlock::serialize_cbor(&request_this_epoch_reward_ret).unwrap(),
+        ExitCode::OK,
+    );
 
     let message_params = ExecParams {
         code_cid: *MINER_ACTOR_CODE_ID,
@@ -120,7 +137,7 @@ fn create_miner_given_send_to_init_actor_fails_should_fail() {
         INIT_ACTOR_ADDR,
         EXEC_METHOD,
         IpldBlock::serialize_cbor(&message_params).unwrap(),
-        TokenAmount::from_atto(10),
+        TokenAmount::from_atto(330),
         None,
         ExitCode::USR_INSUFFICIENT_FUNDS,
     );
@@ -1459,7 +1476,10 @@ fn create_miner_restricted_correctly() {
     })
     .unwrap();
 
+    let deposit = TokenAmount::from_atto(320);
     rt.set_caller(*EVM_ACTOR_CODE_ID, *OWNER);
+    rt.set_received(deposit.clone());
+    rt.set_balance(deposit.clone());
 
     // cannot call the unexported method
     expect_abort_contains_message(
@@ -1471,6 +1491,21 @@ fn create_miner_restricted_correctly() {
     // can call the exported method
 
     rt.expect_validate_caller_any();
+
+    // set request current epoch block reward expectation
+    let request_this_epoch_reward_ret = ThisEpochRewardReturn {
+        this_epoch_reward_smoothed: Default::default(),
+        this_epoch_baseline_power: BigInt::zero(),
+    };
+    rt.expect_send_simple(
+        REWARD_ACTOR_ADDR,
+        THIS_EPOCH_REWARD_METHOD,
+        Default::default(),
+        TokenAmount::zero(),
+        IpldBlock::serialize_cbor(&request_this_epoch_reward_ret).unwrap(),
+        ExitCode::OK,
+    );
+
     let expected_init_params = ExecParams {
         code_cid: *MINER_ACTOR_CODE_ID,
         constructor_params: RawBytes::serialize(MinerConstructorParams {
@@ -1488,8 +1523,20 @@ fn create_miner_restricted_correctly() {
         INIT_ACTOR_ADDR,
         EXEC_METHOD,
         IpldBlock::serialize_cbor(&expected_init_params).unwrap(),
-        TokenAmount::zero(),
+        deposit,
         IpldBlock::serialize_cbor(&create_miner_ret).unwrap(),
+        ExitCode::OK,
+    );
+
+    // set lock create miner deposit expectation
+    let expected_lock_create_miner_deposit_params =
+        LockCreateMinerDepositParams { amount: TokenAmount::from_atto(320) };
+    rt.expect_send_simple(
+        *MINER,
+        LOCK_CREATE_MINER_DESPOIT_METHOD,
+        IpldBlock::serialize_cbor(&expected_lock_create_miner_deposit_params).unwrap(),
+        TokenAmount::zero(),
+        IpldBlock::serialize_cbor(&()).unwrap(),
         ExitCode::OK,
     );
 

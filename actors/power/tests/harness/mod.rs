@@ -135,10 +135,14 @@ impl Harness {
         window_post_proof_type: RegisteredPoStProof,
         value: &TokenAmount,
     ) -> Result<(), ActorError> {
+        // add create miner deposit into balance
+        let deposit = TokenAmount::from_atto(320);
+        let total = value + deposit;
+
         // starting to create
         rt.set_caller(*ACCOUNT_ACTOR_CODE_ID, *owner);
-        rt.set_received(value.clone());
-        rt.set_balance(value.clone());
+        rt.set_received(total.clone());
+        rt.set_balance(total.clone());
         rt.expect_validate_caller_any();
 
         // set request current epoch block reward expectation
@@ -173,7 +177,7 @@ impl Harness {
             INIT_ACTOR_ADDR,
             ext::init::EXEC_METHOD,
             IpldBlock::serialize_cbor(&expected_init_params).unwrap(),
-            value.clone(),
+            total.clone(),
             IpldBlock::serialize_cbor(&create_miner_ret).unwrap(),
             ExitCode::OK,
         );
