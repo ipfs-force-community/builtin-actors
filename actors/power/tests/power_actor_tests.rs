@@ -44,6 +44,9 @@ fn create_miner() {
     let peer = "miner".as_bytes().to_vec();
     let multiaddrs = vec![BytesDe("multiaddr".as_bytes().to_vec())];
 
+    let deposit = TokenAmount::from_atto(320);
+    let value = TokenAmount::from_atto(10) + deposit;
+
     h.create_miner(
         &rt,
         &OWNER,
@@ -53,7 +56,7 @@ fn create_miner() {
         peer,
         multiaddrs,
         RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
-        &TokenAmount::from_atto(10),
+        &value,
     )
     .unwrap();
 

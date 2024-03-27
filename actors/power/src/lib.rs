@@ -81,8 +81,14 @@ pub struct Actor;
 //// See FIP-0077, https://github.com/filecoin-project/FIPs/blob/master/FIPS/fip-0077.md
 pub fn calculate_create_miner_deposit(rt: &impl Runtime) -> Result<TokenAmount, ActorError> {
     // set network pledge inputs
+    let st: State = rt.state()?;
     let rew = request_current_epoch_block_reward(rt)?;
-    let pwr = Actor::current_total_power(rt)?;
+    let pwr = CurrentTotalPowerReturn {
+        raw_byte_power: st.this_epoch_raw_byte_power,
+        quality_adj_power: st.this_epoch_quality_adj_power,
+        pledge_collateral: st.this_epoch_pledge_collateral,
+        quality_adj_power_smoothed: st.this_epoch_qa_power_smoothed,
+    };
     let circulating_supply = rt.total_fil_circ_supply();
     let pledge_inputs = MinerNetworkPledgeInputs {
         network_qap: pwr.quality_adj_power_smoothed,
