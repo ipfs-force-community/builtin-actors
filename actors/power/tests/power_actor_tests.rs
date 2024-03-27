@@ -86,6 +86,52 @@ fn create_miner() {
 }
 
 #[test]
+fn create_miner_given_send_insufficient_deposit_should_fail_without_construct() {
+    let (h, rt) = setup();
+
+    let peer = "miner".as_bytes().to_vec();
+    let multiaddrs = vec![BytesDe("multiaddr".as_bytes().to_vec())];
+
+    // owner send CreateMiner to Actor
+    rt.set_caller(*ACCOUNT_ACTOR_CODE_ID, *OWNER);
+    rt.value_received.replace(TokenAmount::from_atto(10));
+    rt.set_balance(TokenAmount::from_atto(10));
+    rt.expect_validate_caller_any();
+
+    // set request current epoch block reward expectation
+    let request_this_epoch_reward_ret = fil_actor_reward::ThisEpochRewardReturn {
+        this_epoch_reward_smoothed: Default::default(),
+        this_epoch_baseline_power: fvm_shared::bigint::BigInt::zero(),
+    };
+    rt.expect_send_simple(
+        REWARD_ACTOR_ADDR,
+        THIS_EPOCH_REWARD_METHOD,
+        Default::default(),
+        TokenAmount::zero(),
+        IpldBlock::serialize_cbor(&request_this_epoch_reward_ret).unwrap(),
+        ExitCode::OK,
+    );
+
+    let create_miner_params = CreateMinerParams {
+        owner: *OWNER,
+        worker: *OWNER,
+        window_post_proof_type: RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
+        peer,
+        multiaddrs,
+    };
+
+    expect_abort(
+        ExitCode::USR_INSUFFICIENT_FUNDS,
+        rt.call::<PowerActor>(
+            Method::CreateMiner as u64,
+            IpldBlock::serialize_cbor(&create_miner_params).unwrap(),
+        ),
+    );
+    rt.verify();
+    h.check_state(&rt);
+}
+
+#[test]
 fn create_miner_given_send_to_init_actor_fails_should_fail() {
     let (h, rt) = setup();
 
