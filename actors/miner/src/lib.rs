@@ -3421,7 +3421,7 @@ impl Actor {
     }
 
     /// Lock the create miner deposit for 180 days.
-    //// See FIP-0077, https://github.com/filecoin-project/FIPs/blob/master/FIPS/fip-0077.md
+    /// See FIP-0077, https://github.com/filecoin-project/FIPs/blob/master/FIPS/fip-0077.md
     fn lock_create_miner_deposit(
         rt: &impl Runtime,
         params: LockCreateMinerDepositParams,

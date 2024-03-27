@@ -148,6 +148,9 @@ impl Actor {
         let value = rt.message().value_received();
 
         let deposit = calculate_create_miner_deposit(rt)?;
+
+        println!("power::create_miner: deposit: {:?}", deposit.atto());
+
         if value < deposit {
             return Err(actor_error!(insufficient_funds;
                     "not enough balance to lock for create miner deposit: \
