@@ -3427,14 +3427,11 @@ impl Actor {
         params: LockCreateMinerDepositParams,
     ) -> Result<(), ActorError> {
         rt.validate_immediate_caller_is(std::iter::once(&STORAGE_POWER_ACTOR_ADDR))?;
+        rt.transaction(|st: &mut State, rt| {
+            st.add_create_miner_deposit(params.amount, rt.curr_epoch());
 
-        let mut st: State = rt.state()?;
-        st.add_locked_funds(rt.store(), rt.curr_epoch(), &params.amount, &REWARD_VESTING_SPEC)
-            .map_err(|e| {
-                actor_error!(illegal_state, "failed to lock funds in vesting table: {}", e)
-            })?;
-
-        Ok(())
+            Ok(())
+        })
     }
 }
 

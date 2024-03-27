@@ -222,14 +222,18 @@ fn market_setup(v: &dyn VM) -> Address {
 }
 
 fn miner_setup(v: &dyn VM) -> (Address, Address, Address) {
-    let deposit = TokenAmount::from_atto(319999994978159820800u128);
-    let initial_balance = TokenAmount::from_whole(10_000) + &deposit;
+    let initial_balance = TokenAmount::from_whole(10_000);
     let addrs = create_accounts(v, 2, &initial_balance);
     let (worker, owner) = (addrs[0], addrs[1]);
 
     // create miner
-    let (m_addr, _) =
-        create_miner(v, &owner, &worker, RegisteredPoStProof::StackedDRGWindow32GiBV1P1, &deposit);
+    let (m_addr, _) = create_miner(
+        v,
+        &owner,
+        &worker,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
+        &TokenAmount::zero(),
+    );
 
     (worker, owner, m_addr)
 }
