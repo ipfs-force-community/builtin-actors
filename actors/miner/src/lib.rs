@@ -3428,15 +3428,13 @@ impl Actor {
     ) -> Result<(), ActorError> {
         rt.validate_immediate_caller_is(std::iter::once(&STORAGE_POWER_ACTOR_ADDR))?;
 
-        rt.transaction(|state: &mut State, rt| {
-            let _ = state
-                .add_locked_funds(rt.store(), rt.curr_epoch(), &params.amount, &REWARD_VESTING_SPEC)
-                .map_err(|e| {
-                    actor_error!(illegal_state, "failed to lock funds in vesting table: {}", e)
-                })?;
+        let mut st: State = rt.state()?;
+        st.add_locked_funds(rt.store(), rt.curr_epoch(), &params.amount, &REWARD_VESTING_SPEC)
+            .map_err(|e| {
+                actor_error!(illegal_state, "failed to lock funds in vesting table: {}", e)
+            })?;
 
-            Ok(())
-        })
+        Ok(())
     }
 }
 
