@@ -119,7 +119,7 @@ pub fn create_miner(
     balance: &TokenAmount,
 ) -> (Address, Address) {
     // sent deposit to owner
-    owner_add_create_miner_deposit(v, &owner);
+    owner_add_create_miner_deposit(v, owner);
 
     let deposit = TokenAmount::from_atto(319999994978159820800u128);
     let total = balance + deposit;
