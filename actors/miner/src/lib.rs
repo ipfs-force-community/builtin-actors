@@ -311,7 +311,13 @@ impl Actor {
         let vesting_funds = state
             .load_vesting_funds(rt.store())
             .map_err(|e| actor_error!(illegal_state, "failed to load vesting funds: {}", e))?;
-        let ret = vesting_funds.funds.into_iter().map(|v| (v.epoch, v.amount)).collect_vec();
+        let mut ret = vesting_funds.funds.into_iter().map(|v| (v.epoch, v.amount)).collect_vec();
+
+        // add create miner deposit into vest table
+        if let Some(CreateMinerDeposit { amount, epoch }) = &state.create_miner_deposit {
+            ret.push((*epoch, amount.clone()));
+        }
+
         Ok(GetVestingFundsReturn { vesting_funds: ret })
     }
 
