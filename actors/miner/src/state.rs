@@ -1230,9 +1230,9 @@ impl State {
 
 #[derive(Serialize_tuple, Deserialize_tuple, Clone, Debug)]
 pub struct CreateMinerDeposit {
-    amount: TokenAmount,
+    pub amount: TokenAmount,
     /// when to unlock
-    epoch: ChainEpoch,
+    pub epoch: ChainEpoch,
 }
 
 pub struct AdvanceDeadlineResult {
