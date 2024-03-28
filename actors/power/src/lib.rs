@@ -6,7 +6,9 @@ use std::convert::TryInto;
 
 use anyhow::anyhow;
 use fil_actors_runtime::reward::ThisEpochRewardReturn;
-use fil_actors_runtime::runtime::policy_constants::MINIMUM_CONSENSUS_POWER;
+use fil_actors_runtime::runtime::policy_constants::{
+    MINIMUM_CONSENSUS_POWER, MIN_SECTOR_EXPIRATION,
+};
 use fvm_ipld_encoding::ipld_block::IpldBlock;
 use fvm_ipld_encoding::RawBytes;
 use fvm_shared::address::Address;
@@ -78,7 +80,7 @@ pub const ERR_TOO_MANY_PROVE_COMMITS: ExitCode = ExitCode::new(32);
 pub struct Actor;
 
 /// Calculate create miner deposit by MINIMUM_CONSENSUS_POWER x StateMinerInitialPledgeCollateral
-//// See FIP-0077, https://github.com/filecoin-project/FIPs/blob/master/FIPS/fip-0077.md
+/// See FIP-0077, https://github.com/filecoin-project/FIPs/blob/master/FIPS/fip-0077.md
 pub fn calculate_create_miner_deposit(rt: &impl Runtime) -> Result<TokenAmount, ActorError> {
     // set network pledge inputs
     let st: State = rt.state()?;
@@ -112,13 +114,13 @@ pub fn calculate_create_miner_deposit(rt: &impl Runtime) -> Result<TokenAmount, 
     let sector_size = SectorSize::_32GiB;
 
     let sector_number = MINIMUM_CONSENSUS_POWER / sector_size as i64;
-    let power = fil_actor_miner::qa_power_for_weight(
+    let power = ext::miner::qa_power_for_weight(
         sector_size,
-        fil_actor_miner::MIN_SECTOR_EXPIRATION,
+        MIN_SECTOR_EXPIRATION,
         &BigInt::zero(),
         &BigInt::zero(),
     );
-    let sector_initial_pledge = fil_actor_miner::initial_pledge_for_power(
+    let sector_initial_pledge = ext::miner::initial_pledge_for_power(
         &power,
         &pledge_inputs.network_baseline,
         &pledge_inputs.epoch_reward,
