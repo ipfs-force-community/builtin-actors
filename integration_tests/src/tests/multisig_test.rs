@@ -1,19 +1,19 @@
+use export_macro::vm_test;
 use fil_actor_init::ExecReturn;
 use fil_actor_multisig::{
-    compute_proposal_hash, Method as MsigMethod, ProposeParams, RemoveSignerParams,
-    State as MsigState, SwapSignerParams, Transaction, TxnID, TxnIDParams,
+    compute_proposal_hash, Method as MsigMethod, PendingTxnMap, ProposeParams, RemoveSignerParams,
+    State as MsigState, SwapSignerParams, Transaction, TxnID, TxnIDParams, PENDING_TXN_CONFIG,
 };
 use fil_actors_runtime::cbor::serialize;
 use fil_actors_runtime::runtime::Policy;
 use fil_actors_runtime::test_utils::*;
-use fil_actors_runtime::{make_map_with_root, INIT_ACTOR_ADDR, SYSTEM_ACTOR_ADDR};
+use fil_actors_runtime::{INIT_ACTOR_ADDR, SYSTEM_ACTOR_ADDR};
 use fvm_ipld_encoding::RawBytes;
 use fvm_shared::address::Address;
 use fvm_shared::bigint::Zero;
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::error::ExitCode;
 use fvm_shared::METHOD_SEND;
-use integer_encoding::VarInt;
 use std::collections::HashSet;
 use std::iter::FromIterator;
 use vm_api::trace::ExpectInvocation;
@@ -23,6 +23,7 @@ use vm_api::VM;
 use crate::expects::Expect;
 use crate::util::{assert_invariants, create_accounts};
 
+#[vm_test]
 pub fn proposal_hash_test(v: &dyn VM) {
     let addrs = create_accounts(v, 3, &TokenAmount::from_whole(10_000));
     let sys_act_start_bal = v.actor(&SYSTEM_ACTOR_ADDR).unwrap().balance;
@@ -56,9 +57,9 @@ pub fn proposal_hash_test(v: &dyn VM) {
         approved: vec![alice],
         params: RawBytes::default(),
     };
-    let wrong_hash =
-        compute_proposal_hash(&wrong_tx, &MockRuntime::new(&DynBlockstore::wrap(v.blockstore())))
-            .unwrap();
+
+    let wrong_hash = compute_proposal_hash(&wrong_tx, v.primitives()).unwrap();
+
     let wrong_approval_params = TxnIDParams { id: TxnID(0), proposal_hash: wrong_hash.to_vec() };
     apply_code(
         v,
@@ -77,9 +78,9 @@ pub fn proposal_hash_test(v: &dyn VM) {
         approved: vec![alice],
         params: RawBytes::default(),
     };
-    let correct_hash =
-        compute_proposal_hash(&correct_tx, &MockRuntime::new(&DynBlockstore::wrap(v.blockstore())))
-            .unwrap();
+
+    let correct_hash = compute_proposal_hash(&correct_tx, v.primitives()).unwrap();
+
     let correct_approval_params =
         TxnIDParams { id: TxnID(0), proposal_hash: correct_hash.to_vec() };
     apply_ok(
@@ -103,7 +104,7 @@ pub fn proposal_hash_test(v: &dyn VM) {
     expect.matches(v.take_invocations().last().unwrap());
 
     assert_eq!(sys_act_start_bal + fil_delta, v.actor(&SYSTEM_ACTOR_ADDR).unwrap().balance);
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
 pub fn test_delete_self_inner_test(v: &dyn VM, signers: u64, threshold: usize, remove_idx: usize) {
@@ -166,9 +167,10 @@ pub fn test_delete_self_inner_test(v: &dyn VM, signers: u64, threshold: usize, r
     let new_signers: HashSet<Address> = HashSet::from_iter(st.signers);
     let diff: Vec<&Address> = old_signers.symmetric_difference(&new_signers).collect();
     assert_eq!(vec![&(addrs[remove_idx])], diff);
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn swap_self_1_of_2_test(v: &dyn VM) {
     let addrs = create_accounts(v, 3, &TokenAmount::from_whole(10_000));
     let (alice, bob, chuck) = (addrs[0], addrs[1], addrs[2]);
@@ -191,9 +193,10 @@ pub fn swap_self_1_of_2_test(v: &dyn VM) {
     );
     let st: MsigState = get_state(v, &msig_addr).unwrap();
     assert_eq!(vec![bob, chuck], st.signers);
-    assert_invariants(v, &Policy::default());
+    assert_invariants(v, &Policy::default(), None);
 }
 
+#[vm_test]
 pub fn swap_self_2_of_3_test(v: &dyn VM) {
     let addrs = create_accounts(v, 4, &TokenAmount::from_whole(10_000));
     let (alice, bob, chuck, dinesh) = (addrs[0], addrs[1], addrs[2], addrs[3]);
@@ -262,7 +265,7 @@ pub fn swap_self_2_of_3_test(v: &dyn VM) {
     let st: MsigState = get_state(v, &msig_addr).unwrap();
     assert_eq!(vec![bob, chuck, alice], st.signers);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
 fn create_msig(v: &dyn VM, signers: &[Address], threshold: u64) -> Address {
@@ -296,11 +299,10 @@ fn create_msig(v: &dyn VM, signers: &[Address], threshold: u64) -> Address {
 fn check_txs(v: &dyn VM, msig_addr: Address, mut expect_txns: Vec<(TxnID, Transaction)>) {
     let st: MsigState = get_state(v, &msig_addr).unwrap();
     let store = DynBlockstore::wrap(v.blockstore());
-    let ptx = make_map_with_root::<_, Transaction>(&st.pending_txs, &store).unwrap();
+    let ptx = PendingTxnMap::load(&store, &st.pending_txs, PENDING_TXN_CONFIG, "pending").unwrap();
     let mut actual_txns = Vec::new();
     ptx.for_each(|k, txn: &Transaction| {
-        let id = i64::decode_var(k).unwrap().0;
-        actual_txns.push((TxnID(id), txn.clone()));
+        actual_txns.push((k, txn.clone()));
         Ok(())
     })
     .unwrap();

@@ -18,13 +18,11 @@ use fvm_shared::econ::TokenAmount;
 use fvm_shared::error::ExitCode;
 use fvm_shared::piece::PaddedPieceSize;
 
-use fvm_shared::TOTAL_FILECOIN;
-
 use cid::Cid;
 use fil_actor_market::ext::account::{AuthenticateMessageParams, AUTHENTICATE_MESSAGE_METHOD};
+use fil_actor_market::policy::TOTAL_FILECOIN;
 
 mod harness;
-
 use fvm_ipld_encoding::ipld_block::IpldBlock;
 use fvm_shared::sys::SendFlags;
 use harness::*;
@@ -374,6 +372,14 @@ fn fail_when_deals_have_different_providers() {
         TokenAmount::zero(),
         None,
         ExitCode::OK,
+    );
+
+    expect_emitted(
+        &rt,
+        "deal-published",
+        next_deal_id,
+        deal1.client.id().unwrap(),
+        deal1.provider.id().unwrap(),
     );
 
     let psd_ret: PublishStorageDealsReturn = rt

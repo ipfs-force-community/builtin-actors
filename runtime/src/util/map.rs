@@ -87,6 +87,16 @@ where
         })
     }
 
+    /// Returns a reference to the underlying blockstore.
+    pub fn store(&self) -> &BS {
+        self.hamt.store()
+    }
+
+    /// Returns whether the map is empty.
+    pub fn is_empty(&self) -> bool {
+        self.hamt.is_empty()
+    }
+
     /// Returns a reference to the value associated with a key, if present.
     pub fn get(&self, key: &K) -> Result<Option<&V>, ActorError> {
         let k = key.to_bytes().context_code(ExitCode::USR_ASSERTION_FAILED, "invalid key")?;
@@ -148,25 +158,24 @@ where
         // wrapped in a hamt::Error::Dynamic.
         F: FnMut(K, &V) -> Result<(), ActorError>,
     {
-        match self.hamt.for_each(|k, v| {
-            let key = K::from_bytes(k).context_code(ExitCode::USR_ILLEGAL_STATE, "invalid key")?;
-            f(key, v).map_err(|e| anyhow!(e))
-        }) {
-            Ok(_) => Ok(()),
-            Err(hamt_err) => match hamt_err {
+        self.hamt
+            .for_each(|k, v| {
+                let key =
+                    K::from_bytes(k).context_code(ExitCode::USR_ILLEGAL_STATE, "invalid key")?;
+                f(key, v).map_err(|e| anyhow!(e))
+            })
+            .map_err(|hamt_err| match hamt_err {
                 hamt::Error::Dynamic(e) => match e.downcast::<ActorError>() {
-                    Ok(ae) => Err(ae),
-                    Err(e) => Err(ActorError::illegal_state(format!(
+                    Ok(ae) => ae,
+                    Err(e) => ActorError::illegal_state(format!(
                         "error in callback traversing HAMT {}: {}",
                         self.name, e
-                    ))),
+                    )),
                 },
-                e => Err(ActorError::illegal_state(format!(
-                    "error traversing HAMT {}: {}",
-                    self.name, e
-                ))),
-            },
-        }
+                e => {
+                    ActorError::illegal_state(format!("error traversing HAMT {}: {}", self.name, e))
+                }
+            })
     }
 }
 
@@ -237,7 +246,7 @@ impl MapKey for Cid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fvm_ipld_blockstore::MemoryBlockstore;
+    use crate::test_blockstores::MemoryBlockstore;
 
     #[test]
     fn basic_put_get() {

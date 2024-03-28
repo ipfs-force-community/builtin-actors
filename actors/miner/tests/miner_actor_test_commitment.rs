@@ -3,6 +3,7 @@ use fil_actor_miner::{
     VestSpec,
 };
 use fil_actors_runtime::network::EPOCHS_IN_DAY;
+use fil_actors_runtime::runtime::policy_constants::MAX_SECTOR_NUMBER;
 use fil_actors_runtime::test_utils::*;
 use fvm_shared::address::Address;
 use fvm_shared::clock::ChainEpoch;
@@ -10,7 +11,7 @@ use fvm_shared::consensus::{ConsensusFault, ConsensusFaultType};
 use fvm_shared::deal::DealID;
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::error::ExitCode;
-use fvm_shared::sector::{RegisteredSealProof, SectorNumber, MAX_SECTOR_NUMBER};
+use fvm_shared::sector::{RegisteredSealProof, SectorNumber};
 
 use num_traits::Zero;
 
@@ -394,7 +395,7 @@ mod miner_actor_test_commitment {
                 fault_type: ConsensusFaultType::DoubleForkMining,
             };
             let test_addr = Address::new_id(1234);
-            h.report_consensus_fault(&rt, test_addr, Some(fault)).unwrap();
+            h.report_consensus_fault(&rt, test_addr, Some(fault), ExitCode::OK).unwrap();
             let precommit_params =
                 h.make_pre_commit_params(102, challenge_epoch, expiration, vec![]);
             let ret =
@@ -429,8 +430,11 @@ mod miner_actor_test_commitment {
         let sector_number: SectorNumber = 100;
         let deal_limits = [
             (RegisteredSealProof::StackedDRG2KiBV1P1, 256),
+            (RegisteredSealProof::StackedDRG2KiBV1P1_Feat_SyntheticPoRep, 256),
             (RegisteredSealProof::StackedDRG32GiBV1P1, 256),
+            (RegisteredSealProof::StackedDRG32GiBV1P1_Feat_SyntheticPoRep, 256),
             (RegisteredSealProof::StackedDRG64GiBV1P1, 512),
+            (RegisteredSealProof::StackedDRG64GiBV1P1_Feat_SyntheticPoRep, 512),
         ];
 
         for (proof, limit) in deal_limits {

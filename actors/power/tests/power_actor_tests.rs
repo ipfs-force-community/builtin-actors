@@ -1,14 +1,20 @@
 use fil_actor_power::ext::init::{ExecParams, EXEC_METHOD};
-use fil_actor_power::ext::miner::MinerConstructorParams;
+use fil_actor_power::ext::miner::{
+    LockCreateMinerDepositParams, MinerConstructorParams, LOCK_CREATE_MINER_DESPOIT_METHOD,
+};
+use fil_actor_power::ext::reward::THIS_EPOCH_REWARD_METHOD;
+use fil_actor_reward::ThisEpochRewardReturn;
 use fil_actors_runtime::runtime::builtins::Type;
 use fil_actors_runtime::test_utils::{
     expect_abort, expect_abort_contains_message, ACCOUNT_ACTOR_CODE_ID, EVM_ACTOR_CODE_ID,
     MINER_ACTOR_CODE_ID, SYSTEM_ACTOR_CODE_ID,
 };
+use fil_actors_runtime::REWARD_ACTOR_ADDR;
 use fil_actors_runtime::{runtime::Policy, INIT_ACTOR_ADDR};
 use fvm_ipld_encoding::{BytesDe, RawBytes};
 use fvm_shared::address::Address;
 use fvm_shared::bigint::bigint_ser::BigIntSer;
+use fvm_shared::bigint::BigInt;
 use fvm_shared::clock::ChainEpoch;
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::error::ExitCode;
@@ -52,7 +58,7 @@ fn create_miner() {
         &ACTOR,
         peer,
         multiaddrs,
-        RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
         &TokenAmount::from_atto(10),
     )
     .unwrap();
@@ -60,7 +66,7 @@ fn create_miner() {
     let st: State = rt.get_state();
     // Verify the miner's claim.
     let claim = h.get_claim(&rt, &MINER).unwrap();
-    assert_eq!(RegisteredPoStProof::StackedDRGWindow32GiBV1, claim.window_post_proof_type);
+    assert_eq!(RegisteredPoStProof::StackedDRGWindow32GiBV1P1, claim.window_post_proof_type);
     assert_eq!(StoragePower::zero(), claim.raw_byte_power);
     assert_eq!(StoragePower::zero(), claim.quality_adj_power);
 
@@ -80,6 +86,52 @@ fn create_miner() {
 }
 
 #[test]
+fn create_miner_given_send_insufficient_deposit_should_fail_without_construct() {
+    let (h, rt) = setup();
+
+    let peer = "miner".as_bytes().to_vec();
+    let multiaddrs = vec![BytesDe("multiaddr".as_bytes().to_vec())];
+
+    // owner send CreateMiner to Actor
+    rt.set_caller(*ACCOUNT_ACTOR_CODE_ID, *OWNER);
+    rt.value_received.replace(TokenAmount::from_atto(10));
+    rt.set_balance(TokenAmount::from_atto(10));
+    rt.expect_validate_caller_any();
+
+    // set request current epoch block reward expectation
+    let request_this_epoch_reward_ret = fil_actor_reward::ThisEpochRewardReturn {
+        this_epoch_reward_smoothed: Default::default(),
+        this_epoch_baseline_power: fvm_shared::bigint::BigInt::zero(),
+    };
+    rt.expect_send_simple(
+        REWARD_ACTOR_ADDR,
+        THIS_EPOCH_REWARD_METHOD,
+        Default::default(),
+        TokenAmount::zero(),
+        IpldBlock::serialize_cbor(&request_this_epoch_reward_ret).unwrap(),
+        ExitCode::OK,
+    );
+
+    let create_miner_params = CreateMinerParams {
+        owner: *OWNER,
+        worker: *OWNER,
+        window_post_proof_type: RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
+        peer,
+        multiaddrs,
+    };
+
+    expect_abort(
+        ExitCode::USR_INSUFFICIENT_FUNDS,
+        rt.call::<PowerActor>(
+            Method::CreateMiner as u64,
+            IpldBlock::serialize_cbor(&create_miner_params).unwrap(),
+        ),
+    );
+    rt.verify();
+    h.check_state(&rt);
+}
+
+#[test]
 fn create_miner_given_send_to_init_actor_fails_should_fail() {
     let (h, rt) = setup();
 
@@ -89,23 +141,37 @@ fn create_miner_given_send_to_init_actor_fails_should_fail() {
     let create_miner_params = CreateMinerParams {
         owner: *OWNER,
         worker: *OWNER,
-        window_post_proof_type: RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        window_post_proof_type: RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
         peer: peer.clone(),
         multiaddrs: multiaddrs.clone(),
     };
 
     // owner send CreateMiner to Actor
     rt.set_caller(*ACCOUNT_ACTOR_CODE_ID, *OWNER);
-    rt.value_received.replace(TokenAmount::from_atto(10));
-    rt.set_balance(TokenAmount::from_atto(10));
+    rt.value_received.replace(TokenAmount::from_atto(330));
+    rt.set_balance(TokenAmount::from_atto(330));
     rt.expect_validate_caller_any();
+
+    // set request current epoch block reward expectation
+    let request_this_epoch_reward_ret = fil_actor_reward::ThisEpochRewardReturn {
+        this_epoch_reward_smoothed: Default::default(),
+        this_epoch_baseline_power: fvm_shared::bigint::BigInt::zero(),
+    };
+    rt.expect_send_simple(
+        REWARD_ACTOR_ADDR,
+        THIS_EPOCH_REWARD_METHOD,
+        Default::default(),
+        TokenAmount::zero(),
+        IpldBlock::serialize_cbor(&request_this_epoch_reward_ret).unwrap(),
+        ExitCode::OK,
+    );
 
     let message_params = ExecParams {
         code_cid: *MINER_ACTOR_CODE_ID,
         constructor_params: RawBytes::serialize(MinerConstructorParams {
             owner: *OWNER,
             worker: *OWNER,
-            window_post_proof_type: RegisteredPoStProof::StackedDRGWindow32GiBV1,
+            window_post_proof_type: RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
             peer_id: peer,
             multi_addresses: multiaddrs,
             control_addresses: Default::default(),
@@ -117,7 +183,7 @@ fn create_miner_given_send_to_init_actor_fails_should_fail() {
         INIT_ACTOR_ADDR,
         EXEC_METHOD,
         IpldBlock::serialize_cbor(&message_params).unwrap(),
-        TokenAmount::from_atto(10),
+        TokenAmount::from_atto(330),
         None,
         ExitCode::USR_INSUFFICIENT_FUNDS,
     );
@@ -319,8 +385,8 @@ fn new_miner_updates_miner_above_min_power_count() {
     }
 
     let test_cases = [
-        TestCase { proof: RegisteredPoStProof::StackedDRGWindow2KiBV1, expected_miners: 0 },
-        TestCase { proof: RegisteredPoStProof::StackedDRGWindow32GiBV1, expected_miners: 0 },
+        TestCase { proof: RegisteredPoStProof::StackedDRGWindow2KiBV1P1, expected_miners: 0 },
+        TestCase { proof: RegisteredPoStProof::StackedDRGWindow32GiBV1P1, expected_miners: 0 },
     ];
 
     for test in test_cases {
@@ -340,7 +406,7 @@ fn power_accounting_crossing_threshold() {
 
     let power_unit = &consensus_miner_min_power(
         &Policy::default(),
-        RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
     )
     .unwrap();
     let power_unit_x10 = &(power_unit * 10);
@@ -386,7 +452,7 @@ fn all_of_one_miners_power_disappears_when_that_miner_dips_below_min_power_thres
     let small_power_unit = &StoragePower::from(1_000_000);
     let power_unit = &consensus_miner_min_power(
         &Policy::default(),
-        RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
     )
     .unwrap();
 
@@ -444,7 +510,7 @@ fn enroll_cron_epoch_given_negative_epoch_should_fail() {
 fn power_gets_added_when_miner_crosses_min_power_but_not_before() {
     let power_unit = &consensus_miner_min_power(
         &Policy::default(),
-        RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
     )
     .unwrap();
 
@@ -492,7 +558,7 @@ fn power_gets_added_when_miner_crosses_min_power_but_not_before() {
 fn threshold_only_depends_on_raw_power_not_qa_power() {
     let power_unit = &consensus_miner_min_power(
         &Policy::default(),
-        RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
     )
     .unwrap();
     let half_power_unit = &(power_unit / 2);
@@ -520,7 +586,7 @@ fn threshold_only_depends_on_raw_power_not_qa_power() {
 fn qa_power_is_above_threshold_before_and_after_update() {
     let power_unit = &consensus_miner_min_power(
         &Policy::default(),
-        RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
     )
     .unwrap();
     let power_unit_x3 = &(power_unit * 3);
@@ -547,7 +613,7 @@ fn qa_power_is_above_threshold_before_and_after_update() {
 fn claimed_power_is_externally_available() {
     let power_unit = &consensus_miner_min_power(
         &Policy::default(),
-        RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
     )
     .unwrap();
 
@@ -567,7 +633,7 @@ fn claimed_power_is_externally_available() {
 fn get_network_and_miner_power() {
     let power_unit = &consensus_miner_min_power(
         &Policy::default(),
-        RegisteredPoStProof::StackedDRGWindow32GiBV1,
+        RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
     )
     .unwrap();
 
@@ -681,7 +747,7 @@ mod cron_tests {
         let (mut h, rt) = setup();
         let power_unit = consensus_miner_min_power(
             &Policy::default(),
-            RegisteredPoStProof::StackedDRGWindow2KiBV1,
+            RegisteredPoStProof::StackedDRGWindow2KiBV1P1,
         )
         .unwrap();
 
@@ -945,7 +1011,7 @@ mod cron_tests {
 
         let raw_power = consensus_miner_min_power(
             &Policy::default(),
-            RegisteredPoStProof::StackedDRGWindow32GiBV1,
+            RegisteredPoStProof::StackedDRGWindow32GiBV1P1,
         )
         .unwrap();
 
@@ -1456,7 +1522,10 @@ fn create_miner_restricted_correctly() {
     })
     .unwrap();
 
+    let deposit = TokenAmount::from_atto(320);
     rt.set_caller(*EVM_ACTOR_CODE_ID, *OWNER);
+    rt.set_received(deposit.clone());
+    rt.set_balance(deposit.clone());
 
     // cannot call the unexported method
     expect_abort_contains_message(
@@ -1468,6 +1537,21 @@ fn create_miner_restricted_correctly() {
     // can call the exported method
 
     rt.expect_validate_caller_any();
+
+    // set request current epoch block reward expectation
+    let request_this_epoch_reward_ret = ThisEpochRewardReturn {
+        this_epoch_reward_smoothed: Default::default(),
+        this_epoch_baseline_power: BigInt::zero(),
+    };
+    rt.expect_send_simple(
+        REWARD_ACTOR_ADDR,
+        THIS_EPOCH_REWARD_METHOD,
+        Default::default(),
+        TokenAmount::zero(),
+        IpldBlock::serialize_cbor(&request_this_epoch_reward_ret).unwrap(),
+        ExitCode::OK,
+    );
+
     let expected_init_params = ExecParams {
         code_cid: *MINER_ACTOR_CODE_ID,
         constructor_params: RawBytes::serialize(MinerConstructorParams {
@@ -1485,8 +1569,20 @@ fn create_miner_restricted_correctly() {
         INIT_ACTOR_ADDR,
         EXEC_METHOD,
         IpldBlock::serialize_cbor(&expected_init_params).unwrap(),
-        TokenAmount::zero(),
+        deposit,
         IpldBlock::serialize_cbor(&create_miner_ret).unwrap(),
+        ExitCode::OK,
+    );
+
+    // set lock create miner deposit expectation
+    let expected_lock_create_miner_deposit_params =
+        LockCreateMinerDepositParams { amount: TokenAmount::from_atto(320) };
+    rt.expect_send_simple(
+        *MINER,
+        LOCK_CREATE_MINER_DESPOIT_METHOD,
+        IpldBlock::serialize_cbor(&expected_lock_create_miner_deposit_params).unwrap(),
+        TokenAmount::zero(),
+        IpldBlock::serialize_cbor(&()).unwrap(),
         ExitCode::OK,
     );
 

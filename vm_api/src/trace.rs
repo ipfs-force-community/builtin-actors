@@ -2,9 +2,16 @@ use fvm_ipld_encoding::ipld_block::IpldBlock;
 use fvm_shared::address::Address;
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::error::{ErrorNumber, ExitCode};
+use fvm_shared::event::ActorEvent;
 use fvm_shared::{ActorID, MethodNum};
 
 type ReturnValue = Option<IpldBlock>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmittedEvent {
+    pub emitter: ActorID,
+    pub event: ActorEvent,
+}
 
 /// A trace of an actor method invocation.
 #[derive(Clone, Debug)]
@@ -20,6 +27,7 @@ pub struct InvocationTrace {
     pub exit_code: ExitCode,
     pub return_value: ReturnValue,
     pub subinvocations: Vec<InvocationTrace>,
+    pub events: Vec<EmittedEvent>,
 }
 
 /// An expectation for a method invocation trace.
@@ -44,6 +52,7 @@ pub struct ExpectInvocation {
     pub exit_code: ExitCode,
     pub return_value: Option<ReturnValue>,
     pub subinvocs: Option<Vec<ExpectInvocation>>,
+    pub events: Vec<EmittedEvent>,
 }
 
 impl ExpectInvocation {
@@ -105,6 +114,29 @@ impl ExpectInvocation {
                 id, p, invoc.params
             );
         }
+
+        // match emitted events
+        let emitted_events = &invoc.events;
+        let expected_events = &self.events;
+        assert_eq!(
+            emitted_events.len(),
+            expected_events.len(),
+            "{} {} emitted={}, expected={}, {:?}, {:?}",
+            id,
+            "length of expected and emitted events do not match",
+            emitted_events.len(),
+            expected_events.len(),
+            emitted_events,
+            expected_events
+        );
+
+        // use the zip method to iterate over the emitted events and expected_events
+        // vectors at the same time
+        for (emitted, expected) in emitted_events.iter().zip(expected_events.iter()) {
+            // only try to match if required fields match
+            assert_eq!(*emitted, *expected);
+        }
+
         if let Some(expect_subinvocs) = &self.subinvocs {
             let subinvocs = &invoc.subinvocations;
 
@@ -125,18 +157,19 @@ impl ExpectInvocation {
     }
 
     pub fn fmt_invocs(&self, invocs: &[InvocationTrace]) -> String {
-        invocs
-            .iter()
-            .enumerate()
-            .map(|(i, invoc)| format!("{}: [{}:{}],\n", i, invoc.to, invoc.method))
-            .collect()
+        invocs.iter().enumerate().fold(String::new(), |mut s, (i, invoc)| {
+            use std::fmt::Write;
+            let _ = writeln!(s, "{}: [{}:{}],", i, invoc.to, invoc.method);
+            s
+        })
     }
 
     pub fn fmt_expect_invocs(&self, exs: &[ExpectInvocation]) -> String {
-        exs.iter()
-            .enumerate()
-            .map(|(i, ex)| format!("{}: [{}:{}],\n", i, ex.to, ex.method))
-            .collect()
+        exs.iter().enumerate().fold(String::new(), |mut s, (i, ex)| {
+            use std::fmt::Write;
+            let _ = writeln!(s, "{}: [{}:{}],", i, ex.to, ex.method);
+            s
+        })
     }
 
     pub fn quick_match(&self, invoc: &InvocationTrace, extra_msg: String) {
@@ -154,7 +187,7 @@ impl ExpectInvocation {
         assert_eq!(
             self.method, invoc.method,
             "{} unexpected method: expected: {}, was: {} \n{}",
-            id, self.method, invoc.from, extra_msg
+            id, self.method, invoc.method, extra_msg
         );
     }
 }
@@ -174,6 +207,7 @@ impl Default for ExpectInvocation {
             exit_code: ExitCode::OK,
             return_value: None,
             subinvocs: None,
+            events: vec![],
         }
     }
 }

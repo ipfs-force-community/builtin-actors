@@ -1,22 +1,19 @@
-use fil_actor_cron::Method as CronMethod;
+use export_macro::vm_test;
 use fil_actor_miner::SectorPreCommitOnChainInfo;
 use fil_actor_miner::{power_for_sector, State as MinerState};
-use fil_actors_runtime::builtin::SYSTEM_ACTOR_ADDR;
 use fil_actors_runtime::runtime::policy::policy_constants::PRE_COMMIT_CHALLENGE_DELAY;
 use fil_actors_runtime::runtime::policy_constants::{
     MAX_AGGREGATED_SECTORS, PRE_COMMIT_SECTOR_BATCH_MAX_SIZE,
 };
 use fil_actors_runtime::runtime::Policy;
-use fil_actors_runtime::CRON_ACTOR_ADDR;
-use fvm_ipld_encoding::RawBytes;
-use fvm_shared::bigint::{BigInt, Zero};
+use fvm_shared::bigint::BigInt;
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::sector::{RegisteredSealProof, SectorNumber};
-use vm_api::util::{apply_ok, get_state, DynBlockstore};
+use vm_api::util::{get_state, DynBlockstore};
 use vm_api::VM;
 
 use crate::util::{
-    advance_to_proving_deadline, create_accounts, create_miner, expect_invariants,
+    advance_to_proving_deadline, create_accounts, create_miner, cron_tick, expect_invariants,
     get_network_stats, invariant_failure_patterns, miner_balance, precommit_sectors_v2,
     prove_commit_sectors, submit_windowed_post,
 };
@@ -47,7 +44,8 @@ impl Onboarding {
     }
 }
 
-pub fn batch_onboarding_test(v: &dyn VM, v2: bool) {
+#[vm_test]
+pub fn batch_onboarding_test(v: &dyn VM) {
     let seal_proof = &RegisteredSealProof::StackedDRG32GiBV1P1;
 
     let mut proven_count = 0;
@@ -104,7 +102,6 @@ pub fn batch_onboarding_test(v: &dyn VM, v2: bool) {
                 next_sector_no,
                 next_sector_no == 0,
                 None,
-                v2,
             );
             precommmits.append(&mut new_precommits);
             next_sector_no += item.pre_commit_sector_count as u64;
@@ -141,14 +138,7 @@ pub fn batch_onboarding_test(v: &dyn VM, v2: bool) {
     );
     assert!(network_stats.total_pledge_collateral.is_positive());
 
-    apply_ok(
-        v,
-        &SYSTEM_ACTOR_ADDR,
-        &CRON_ACTOR_ADDR,
-        &TokenAmount::zero(),
-        CronMethod::EpochTick as u64,
-        None::<RawBytes>,
-    );
+    cron_tick(v);
 
     let network_stats = get_network_stats(v);
     let sector_size = seal_proof.sector_size().unwrap() as u64;
@@ -162,5 +152,6 @@ pub fn batch_onboarding_test(v: &dyn VM, v2: bool) {
         v,
         &Policy::default(),
         &[invariant_failure_patterns::REWARD_STATE_EPOCH_MISMATCH.to_owned()],
+        None,
     );
 }

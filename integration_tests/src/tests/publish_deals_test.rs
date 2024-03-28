@@ -26,11 +26,13 @@ use vm_api::VM;
 
 use crate::deals::{DealBatcher, DealOptions};
 use crate::expects::Expect;
+
 use crate::util::{
     assert_invariants, bf_all, create_accounts, create_accounts_seeded, create_miner,
     verifreg_add_verifier,
 };
 use crate::TEST_FAUCET_ADDR;
+use export_macro::vm_test;
 
 struct Addrs {
     worker: Address,
@@ -52,7 +54,8 @@ fn setup(v: &dyn VM) -> (Addrs, ChainEpoch) {
     let owner = worker;
 
     // setup provider
-    let miner_balance = TokenAmount::from_whole(100);
+    let deposit = TokenAmount::from_atto(319999994978159820800u128);
+    let miner_balance = TokenAmount::from_whole(100) + deposit;
     let seal_proof = RegisteredSealProof::StackedDRG32GiBV1P1;
 
     let maddr = create_miner(
@@ -122,6 +125,7 @@ fn setup(v: &dyn VM) -> (Addrs, ChainEpoch) {
     )
 }
 
+#[vm_test]
 pub fn psd_mismatched_provider_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -138,9 +142,10 @@ pub fn psd_mismatched_provider_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0, 2], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_bad_piece_size_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -159,9 +164,10 @@ pub fn psd_bad_piece_size_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![1], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_start_time_in_past_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -175,9 +181,10 @@ pub fn psd_start_time_in_past_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![1], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_client_address_cannot_be_resolved_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -190,9 +197,10 @@ pub fn psd_client_address_cannot_be_resolved_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_no_client_lockup_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -204,9 +212,10 @@ pub fn psd_no_client_lockup_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![1], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_not_enough_client_lockup_for_batch_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -233,9 +242,10 @@ pub fn psd_not_enough_client_lockup_for_batch_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_not_enough_provider_lockup_for_batch_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     // note different seed, different address
@@ -269,9 +279,10 @@ pub fn psd_not_enough_provider_lockup_for_batch_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_duplicate_deal_in_batch_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -295,9 +306,10 @@ pub fn psd_duplicate_deal_in_batch_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0, 1, 4], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_duplicate_deal_in_state_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -319,9 +331,10 @@ pub fn psd_duplicate_deal_in_state_test(v: &dyn VM) {
     let good_inputs2 = bf_all(deal_ret2.valid_deals);
     assert_eq!(vec![1], good_inputs2);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_verified_deal_fails_getting_datacap_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -345,9 +358,10 @@ pub fn psd_verified_deal_fails_getting_datacap_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0, 1], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_random_assortment_of_failures_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -403,9 +417,10 @@ pub fn psd_random_assortment_of_failures_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0, 2, 8], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_all_deals_are_bad_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -427,9 +442,10 @@ pub fn psd_all_deals_are_bad_test(v: &dyn VM) {
     );
 
     batcher.publish_fail(a.worker);
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_bad_sig_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let worker_id = a.worker.id().unwrap();
@@ -502,9 +518,10 @@ pub fn psd_bad_sig_test(v: &dyn VM) {
     }
     .matches(v.take_invocations().last().unwrap());
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn all_deals_are_good_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -521,9 +538,10 @@ pub fn all_deals_are_good_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0, 1, 2, 3, 4], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_valid_deals_with_ones_longer_than_540_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -546,9 +564,10 @@ pub fn psd_valid_deals_with_ones_longer_than_540_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0, 1, 2], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn psd_deal_duration_too_long_test(v: &dyn VM) {
     let (a, deal_start) = setup(v);
     let opts = DealOptions { deal_start, ..DealOptions::default() };
@@ -573,5 +592,5 @@ pub fn psd_deal_duration_too_long_test(v: &dyn VM) {
     let good_inputs = bf_all(deal_ret.valid_deals);
     assert_eq!(vec![0, 1], good_inputs);
 
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }

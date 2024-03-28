@@ -1,18 +1,20 @@
+use cid::Cid;
+use export_macro::vm_test;
+use fil_actors_runtime::runtime::policy_constants::MAX_SECTOR_NUMBER;
 use fvm_ipld_bitfield::BitField;
 use fvm_ipld_encoding::ipld_block::IpldBlock;
-use fvm_ipld_encoding::RawBytes;
 use fvm_shared::address::Address;
 use fvm_shared::bigint::Zero;
 use fvm_shared::econ::TokenAmount;
 use fvm_shared::error::ExitCode;
 use fvm_shared::randomness::Randomness;
-use fvm_shared::sector::{PoStProof, RegisteredSealProof, SectorNumber, MAX_SECTOR_NUMBER};
+use fvm_shared::sector::{PoStProof, RegisteredSealProof, SectorNumber};
 
 use crate::expects::Expect;
 use crate::util::{
     advance_by_deadline_to_epoch, advance_to_proving_deadline, assert_invariants, create_accounts,
-    create_miner, expect_invariants, get_network_stats, invariant_failure_patterns, miner_balance,
-    precommit_sectors, submit_windowed_post,
+    create_miner, cron_tick, expect_invariants, get_network_stats, invariant_failure_patterns,
+    miner_balance, precommit_sectors_v2, submit_windowed_post,
 };
 use crate::TEST_VM_RAND_ARRAY;
 use fil_actor_cron::Method as CronMethod;
@@ -26,9 +28,9 @@ use fil_actor_power::{Method as PowerMethod, State as PowerState};
 use fil_actors_runtime::runtime::Policy;
 use fil_actors_runtime::{
     CRON_ACTOR_ADDR, CRON_ACTOR_ID, STORAGE_MARKET_ACTOR_ADDR, STORAGE_POWER_ACTOR_ADDR,
-    STORAGE_POWER_ACTOR_ID, SYSTEM_ACTOR_ADDR,
+    STORAGE_POWER_ACTOR_ID,
 };
-use vm_api::trace::ExpectInvocation;
+use vm_api::trace::{EmittedEvent, ExpectInvocation};
 use vm_api::util::{apply_code, apply_ok, get_state, DynBlockstore};
 use vm_api::VM;
 
@@ -62,7 +64,19 @@ fn setup(v: &dyn VM) -> (MinerInfo, SectorInfo) {
 
     // precommit and advance to prove commit time
     let sector_number: SectorNumber = 100;
-    precommit_sectors(v, 1, 1, &worker, &id_addr, seal_proof, sector_number, true, None);
+    let infos = precommit_sectors_v2(
+        v,
+        1,
+        1,
+        vec![],
+        &worker,
+        &id_addr,
+        seal_proof,
+        sector_number,
+        true,
+        None,
+    );
+    let pc = &infos[0];
 
     let balances = miner_balance(v, &id_addr);
     assert!(balances.pre_commit_deposit.is_positive());
@@ -70,8 +84,9 @@ fn setup(v: &dyn VM) -> (MinerInfo, SectorInfo) {
     let prove_time = v.epoch() + Policy::default().pre_commit_challenge_delay + 1;
     advance_by_deadline_to_epoch(v, &id_addr, prove_time);
 
+    let unsealed_cid = pc.info.unsealed_cid.0;
     // prove commit, cron, advance to post time
-    let prove_params = ProveCommitSectorParams { sector_number, proof: vec![] };
+    let prove_params = ProveCommitSectorParams { sector_number, proof: vec![].into() };
     let prove_params_ser = IpldBlock::serialize_cbor(&prove_params).unwrap();
     apply_ok(
         v,
@@ -90,16 +105,10 @@ fn setup(v: &dyn VM) -> (MinerInfo, SectorInfo) {
         ..Default::default()
     }
     .matches(v.take_invocations().last().unwrap());
-    let res = v
-        .execute_message(
-            &SYSTEM_ACTOR_ADDR,
-            &CRON_ACTOR_ADDR,
-            &TokenAmount::zero(),
-            CronMethod::EpochTick as u64,
-            None,
-        )
-        .unwrap();
-    assert_eq!(ExitCode::OK, res.code);
+
+    cron_tick(v);
+
+    let pieces: Vec<(Cid, u64)> = vec![];
     ExpectInvocation {
         to: CRON_ACTOR_ADDR,
         method: CronMethod::EpochTick as u64,
@@ -118,6 +127,13 @@ fn setup(v: &dyn VM) -> (MinerInfo, SectorInfo) {
                             id_addr.id().unwrap(),
                             None,
                         )]),
+                        events: vec![Expect::build_sector_activation_event(
+                            "sector-activated",
+                            id_addr.id().unwrap(),
+                            sector_number,
+                            unsealed_cid,
+                            &pieces,
+                        )],
                         ..Default::default()
                     },
                     Expect::reward_update_kpi(),
@@ -158,6 +174,7 @@ fn setup(v: &dyn VM) -> (MinerInfo, SectorInfo) {
     )
 }
 
+#[vm_test]
 pub fn submit_post_succeeds_test(v: &dyn VM) {
     let (miner_info, sector_info) = setup(v);
     // submit post
@@ -178,9 +195,10 @@ pub fn submit_post_succeeds_test(v: &dyn VM) {
     let p_st: PowerState = get_state(v, &STORAGE_POWER_ACTOR_ADDR).unwrap();
     assert_eq!(sector_power.raw, p_st.total_bytes_committed);
 
-    assert_invariants(v, &Policy::default());
+    assert_invariants(v, &Policy::default(), None);
 }
 
+#[vm_test]
 pub fn skip_sector_test(v: &dyn VM) {
     let (miner_info, sector_info) = setup(v);
     // submit post, but skip the only sector in it
@@ -217,23 +235,17 @@ pub fn skip_sector_test(v: &dyn VM) {
     let network_stats = get_network_stats(v);
     assert!(network_stats.total_bytes_committed.is_zero());
     assert!(network_stats.total_pledge_collateral.is_positive());
-    assert_invariants(v, &Policy::default())
+    assert_invariants(v, &Policy::default(), None)
 }
 
+#[vm_test]
 pub fn missed_first_post_deadline_test(v: &dyn VM) {
     let (miner_info, sector_info) = setup(v);
     // move to proving period end
     v.set_epoch(sector_info.deadline_info.last());
 
     // Run cron to detect missing PoSt
-    apply_ok(
-        v,
-        &SYSTEM_ACTOR_ADDR,
-        &CRON_ACTOR_ADDR,
-        &TokenAmount::zero(),
-        CronMethod::EpochTick as u64,
-        None::<RawBytes>,
-    );
+    cron_tick(v);
 
     ExpectInvocation {
         to: CRON_ACTOR_ADDR,
@@ -279,9 +291,11 @@ pub fn missed_first_post_deadline_test(v: &dyn VM) {
         v,
         &Policy::default(),
         &[invariant_failure_patterns::REWARD_STATE_EPOCH_MISMATCH.to_owned()],
+        None,
     );
 }
 
+#[vm_test]
 pub fn overdue_precommit_test(v: &dyn VM) {
     let policy = &Policy::default();
     let addrs = create_accounts(v, 1, &TokenAmount::from_whole(10_000));
@@ -299,11 +313,21 @@ pub fn overdue_precommit_test(v: &dyn VM) {
 
     // precommit and advance to prove commit time
     let sector_number: SectorNumber = 100;
-    let precommit =
-        precommit_sectors(v, 1, 1, &worker, &id_addr, seal_proof, sector_number, true, None)
-            .get(0)
-            .unwrap()
-            .clone();
+    let precommit = precommit_sectors_v2(
+        v,
+        1,
+        1,
+        vec![],
+        &worker,
+        &id_addr,
+        seal_proof,
+        sector_number,
+        true,
+        None,
+    )
+    .first()
+    .unwrap()
+    .clone();
 
     let balances = miner_balance(v, &id_addr);
     assert!(balances.pre_commit_deposit.is_positive());
@@ -323,14 +347,7 @@ pub fn overdue_precommit_test(v: &dyn VM) {
     v.set_epoch(deadline_info.close);
 
     // run cron which should clean up precommit
-    apply_ok(
-        v,
-        &SYSTEM_ACTOR_ADDR,
-        &CRON_ACTOR_ADDR,
-        &TokenAmount::zero(),
-        CronMethod::EpochTick as u64,
-        None::<RawBytes>,
-    );
+    cron_tick(v);
 
     ExpectInvocation {
         to: CRON_ACTOR_ADDR,
@@ -383,9 +400,11 @@ pub fn overdue_precommit_test(v: &dyn VM) {
         v,
         &Policy::default(),
         &[invariant_failure_patterns::REWARD_STATE_EPOCH_MISMATCH.to_owned()],
+        None,
     );
 }
 
+#[vm_test]
 pub fn aggregate_bad_sector_number_test(v: &dyn VM) {
     let addrs = create_accounts(v, 1, &TokenAmount::from_whole(10_000));
     let seal_proof = RegisteredSealProof::StackedDRG32GiBV1P1;
@@ -407,10 +426,11 @@ pub fn aggregate_bad_sector_number_test(v: &dyn VM) {
     // precommit and advance to prove commit time
     let sector_number: SectorNumber = 100;
     let mut precommited_sector_nos = BitField::try_from_bits(
-        precommit_sectors(
+        precommit_sectors_v2(
             v,
             4,
             policy.pre_commit_sector_batch_max_size,
+            vec![],
             &worker,
             &id_addr,
             seal_proof,
@@ -438,7 +458,7 @@ pub fn aggregate_bad_sector_number_test(v: &dyn VM) {
 
     let params = ProveCommitAggregateParams {
         sector_numbers: precommited_sector_nos.clone(),
-        aggregate_proof: vec![],
+        aggregate_proof: vec![].into(),
     };
     apply_code(
         v,
@@ -453,9 +473,11 @@ pub fn aggregate_bad_sector_number_test(v: &dyn VM) {
         v,
         &Policy::default(),
         &[invariant_failure_patterns::REWARD_STATE_EPOCH_MISMATCH.to_owned()],
+        None,
     );
 }
 
+#[vm_test]
 pub fn aggregate_size_limits_test(v: &dyn VM) {
     let oversized_batch = 820;
     let addrs = create_accounts(v, 1, &TokenAmount::from_whole(100_000));
@@ -478,10 +500,11 @@ pub fn aggregate_size_limits_test(v: &dyn VM) {
     // precommit and advance to prove commit time
     let sector_number: SectorNumber = 100;
     let precommited_sector_nos = BitField::try_from_bits(
-        precommit_sectors(
+        precommit_sectors_v2(
             v,
             oversized_batch,
             policy.pre_commit_sector_batch_max_size,
+            vec![],
             &worker,
             &id_addr,
             seal_proof,
@@ -505,7 +528,7 @@ pub fn aggregate_size_limits_test(v: &dyn VM) {
     // Fail with too many sectors
     let params = ProveCommitAggregateParams {
         sector_numbers: precommited_sector_nos.clone(),
-        aggregate_proof: vec![],
+        aggregate_proof: vec![].into(),
     };
     apply_code(
         v,
@@ -522,7 +545,7 @@ pub fn aggregate_size_limits_test(v: &dyn VM) {
         precommited_sector_nos.slice(0, policy.min_aggregated_sectors - 1).unwrap();
     let params = ProveCommitAggregateParams {
         sector_numbers: too_few_sector_nos_bf,
-        aggregate_proof: vec![],
+        aggregate_proof: vec![].into(),
     };
     apply_code(
         v,
@@ -539,7 +562,7 @@ pub fn aggregate_size_limits_test(v: &dyn VM) {
         precommited_sector_nos.slice(0, policy.max_aggregated_sectors).unwrap();
     let params = ProveCommitAggregateParams {
         sector_numbers: just_right_sectors_no_bf,
-        aggregate_proof: vec![0; policy.max_aggregated_proof_size + 1],
+        aggregate_proof: vec![0; policy.max_aggregated_proof_size + 1].into(),
     };
     apply_code(
         v,
@@ -555,9 +578,11 @@ pub fn aggregate_size_limits_test(v: &dyn VM) {
         v,
         &Policy::default(),
         &[invariant_failure_patterns::REWARD_STATE_EPOCH_MISMATCH.to_owned()],
+        None,
     );
 }
 
+#[vm_test]
 pub fn aggregate_bad_sender_test(v: &dyn VM) {
     let addrs = create_accounts(v, 2, &TokenAmount::from_whole(10_000));
     let seal_proof = RegisteredSealProof::StackedDRG32GiBV1P1;
@@ -579,10 +604,11 @@ pub fn aggregate_bad_sender_test(v: &dyn VM) {
     // precommit and advance to prove commit time
     let sector_number: SectorNumber = 100;
     let precommited_sector_nos = BitField::try_from_bits(
-        precommit_sectors(
+        precommit_sectors_v2(
             v,
             4,
             policy.pre_commit_sector_batch_max_size,
+            vec![],
             &worker,
             &id_addr,
             seal_proof,
@@ -606,7 +632,7 @@ pub fn aggregate_bad_sender_test(v: &dyn VM) {
 
     let params = ProveCommitAggregateParams {
         sector_numbers: precommited_sector_nos,
-        aggregate_proof: vec![],
+        aggregate_proof: vec![].into(),
     };
     apply_code(
         v,
@@ -621,9 +647,11 @@ pub fn aggregate_bad_sender_test(v: &dyn VM) {
         v,
         &Policy::default(),
         &[invariant_failure_patterns::REWARD_STATE_EPOCH_MISMATCH.to_owned()],
+        None,
     );
 }
 
+#[vm_test]
 pub fn aggregate_one_precommit_expires_test(v: &dyn VM) {
     let addrs = create_accounts(v, 1, &TokenAmount::from_whole(10_000));
     let seal_proof = RegisteredSealProof::StackedDRG32GiBV1P1;
@@ -648,10 +676,11 @@ pub fn aggregate_one_precommit_expires_test(v: &dyn VM) {
 
     // early precommit
     let early_precommit_time = v.epoch();
-    let early_precommits = precommit_sectors(
+    let early_precommits = precommit_sectors_v2(
         v,
         1,
         policy.pre_commit_sector_batch_max_size,
+        vec![],
         &worker,
         &miner_addr,
         seal_proof,
@@ -667,10 +696,11 @@ pub fn aggregate_one_precommit_expires_test(v: &dyn VM) {
 
     // later precommits
 
-    let later_precommits = precommit_sectors(
+    let later_precommits = precommit_sectors_v2(
         v,
         3,
         policy.pre_commit_sector_batch_max_size,
+        vec![],
         &worker,
         &miner_addr,
         seal_proof,
@@ -679,7 +709,7 @@ pub fn aggregate_one_precommit_expires_test(v: &dyn VM) {
         None,
     );
 
-    let all_precommits = [early_precommits, later_precommits].concat();
+    let all_precommits = [early_precommits, later_precommits.clone()].concat();
 
     let sector_nos_bf =
         BitField::try_from_bits(all_precommits.iter().map(|info| info.info.sector_number)).unwrap();
@@ -705,8 +735,10 @@ pub fn aggregate_one_precommit_expires_test(v: &dyn VM) {
             && agg_setors_count < policy.max_aggregated_sectors
     );
 
-    let prove_params =
-        ProveCommitAggregateParams { sector_numbers: sector_nos_bf, aggregate_proof: vec![] };
+    let prove_params = ProveCommitAggregateParams {
+        sector_numbers: sector_nos_bf,
+        aggregate_proof: vec![].into(),
+    };
     let prove_params_ser = IpldBlock::serialize_cbor(&prove_params).unwrap();
     apply_ok(
         v,
@@ -716,6 +748,22 @@ pub fn aggregate_one_precommit_expires_test(v: &dyn VM) {
         MinerMethod::ProveCommitAggregate as u64,
         Some(prove_params),
     );
+
+    let events: Vec<EmittedEvent> = later_precommits
+        .iter()
+        .map(|info| {
+            let pieces: Vec<(Cid, u64)> = vec![];
+            let unsealed_cid = info.info.unsealed_cid.0;
+            Expect::build_sector_activation_event(
+                "sector-activated",
+                miner_id,
+                info.info.sector_number,
+                unsealed_cid,
+                &pieces,
+            )
+        })
+        .collect();
+
     ExpectInvocation {
         from: worker_id,
         to: miner_addr,
@@ -727,6 +775,7 @@ pub fn aggregate_one_precommit_expires_test(v: &dyn VM) {
             Expect::power_update_pledge(miner_id, None),
             Expect::burn(miner_id, None),
         ]),
+        events,
         ..Default::default()
     }
     .matches(v.take_invocations().last().unwrap());
@@ -739,5 +788,6 @@ pub fn aggregate_one_precommit_expires_test(v: &dyn VM) {
         v,
         &Policy::default(),
         &[invariant_failure_patterns::REWARD_STATE_EPOCH_MISMATCH.to_owned()],
+        None,
     );
 }
