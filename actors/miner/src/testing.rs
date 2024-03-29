@@ -248,6 +248,11 @@ fn check_miner_balances<BS: Blockstore>(
     balance: &TokenAmount,
     acc: &MessageAccumulator,
 ) {
+    let create_deposit = state
+        .create_miner_deposit
+        .as_ref()
+        .map_or_else(|| TokenAmount::zero(), |deposit| deposit.amount.clone());
+
     acc.require(
         !balance.is_negative(),
         format!("miner actor balance is less than zero: {balance}"),
@@ -268,8 +273,11 @@ fn check_miner_balances<BS: Blockstore>(
         !state.fee_debt.is_negative(),
         format!("miner fee debt is less than zero: {}", state.fee_debt),
     );
-
-    acc.require(!(balance - &state.locked_funds - &state.pre_commit_deposits - &state.initial_pledge).is_negative(), format!("miner balance {balance} is less than sum of locked funds ({}), precommit deposit ({}) and initial pledge ({})", state.locked_funds, state.pre_commit_deposits, state.initial_pledge));
+    acc.require(
+        !create_deposit.is_negative(),
+        format!("create miner deposit is less than zero: {}", create_deposit),
+    );
+    acc.require(!(balance - &state.locked_funds - &state.pre_commit_deposits - &state.initial_pledge - &create_deposit).is_negative(), format!("miner balance {balance} is less than sum of locked funds ({}), precommit deposit ({}), initial pledge ({}) and create miner deposit ({})", state.locked_funds, state.pre_commit_deposits, state.initial_pledge, create_deposit));
 
     // locked funds must be sum of vesting table and vesting table payments must be quantized
     let mut vesting_sum = TokenAmount::zero();
@@ -307,7 +315,7 @@ fn check_miner_balances<BS: Blockstore>(
     );
 
     // non zero funds implies that DeadlineCronActive is true
-    if state.continue_deadline_cron() {
+    if state.continue_deadline_cron_without_create_miner_deposit() {
         acc.require(state.deadline_cron_active, "DeadlineCronActive == false when IP+PCD+LF > 0");
     }
 }

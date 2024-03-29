@@ -31,7 +31,7 @@ fn cron_on_inactive_state() {
 
     let st = h.get_state(&rt);
     assert_eq!(PERIOD_OFFSET - rt.policy.wpost_proving_period, st.proving_period_start);
-    assert!(!st.continue_deadline_cron());
+    assert!(!st.continue_deadline_cron_without_create_miner_deposit());
 
     // cron does nothing and does not enroll another cron
     let deadline = h.deadline(&rt);

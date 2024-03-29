@@ -3849,13 +3849,13 @@ impl CronControl {
     pub fn require_cron_inactive(&self, h: &ActorHarness, rt: &MockRuntime) {
         let st = h.get_state(&rt);
         assert!(!st.deadline_cron_active); // No cron running now
-        assert!(!st.continue_deadline_cron()); // No reason to cron now, state inactive
+        assert!(!st.continue_deadline_cron_without_create_miner_deposit()); // No reason to cron now, state inactive
     }
 
     pub fn require_cron_active(&self, h: &ActorHarness, rt: &MockRuntime) {
         let st = h.get_state(rt);
         assert!(st.deadline_cron_active);
-        assert!(st.continue_deadline_cron());
+        assert!(st.continue_deadline_cron_without_create_miner_deposit());
     }
 
     // Start cron by precommitting at preCommitEpoch, return clean up epoch.

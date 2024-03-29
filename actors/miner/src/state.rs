@@ -762,10 +762,21 @@ impl State {
     }
 
     // Return true when the miner actor needs to continue scheduling deadline crons
+    pub fn continue_deadline_cron_without_create_miner_deposit(&self) -> bool {
+        !self.pre_commit_deposits.is_zero()
+            || !self.initial_pledge.is_zero()
+            || !self.locked_funds.is_zero()
+    }
+
+    // Return true when the miner actor needs to continue scheduling deadline crons
     pub fn continue_deadline_cron(&self) -> bool {
         !self.pre_commit_deposits.is_zero()
             || !self.initial_pledge.is_zero()
             || !self.locked_funds.is_zero()
+            || !self
+                .create_miner_deposit
+                .as_ref()
+                .map_or_else(|| true, |deposit| deposit.amount.is_zero())
     }
 
     //
