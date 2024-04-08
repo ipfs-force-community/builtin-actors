@@ -1,7 +1,5 @@
 use fil_actor_power::ext::init::{ExecParams, EXEC_METHOD};
-use fil_actor_power::ext::miner::{
-    LockCreateMinerDepositParams, MinerConstructorParams, LOCK_CREATE_MINER_DESPOIT_METHOD,
-};
+use fil_actor_power::ext::miner::MinerConstructorParams;
 use fil_actor_power::ext::reward::THIS_EPOCH_REWARD_METHOD;
 use fil_actor_reward::ThisEpochRewardReturn;
 use fil_actors_runtime::runtime::builtins::Type;
@@ -175,6 +173,7 @@ fn create_miner_given_send_to_init_actor_fails_should_fail() {
             peer_id: peer,
             multi_addresses: multiaddrs,
             control_addresses: Default::default(),
+            network_qap: Default::default(),
         })
         .unwrap(),
     };
@@ -1561,6 +1560,7 @@ fn create_miner_restricted_correctly() {
             window_post_proof_type: RegisteredPoStProof::StackedDRGWinning2KiBV1,
             peer_id: peer,
             multi_addresses: multiaddrs,
+            network_qap: Default::default(),
         })
         .unwrap(),
     };
@@ -1574,17 +1574,18 @@ fn create_miner_restricted_correctly() {
         ExitCode::OK,
     );
 
-    // set lock create miner deposit expectation
-    let expected_lock_create_miner_deposit_params =
-        LockCreateMinerDepositParams { amount: TokenAmount::from_atto(320) };
-    rt.expect_send_simple(
-        *MINER,
-        LOCK_CREATE_MINER_DESPOIT_METHOD,
-        IpldBlock::serialize_cbor(&expected_lock_create_miner_deposit_params).unwrap(),
-        TokenAmount::zero(),
-        IpldBlock::serialize_cbor(&()).unwrap(),
-        ExitCode::OK,
-    );
+    // FIXME:
+    // // set lock create miner deposit expectation
+    // let expected_lock_create_miner_deposit_params =
+    //     LockCreateMinerDepositParams { amount: TokenAmount::from_atto(320) };
+    // rt.expect_send_simple(
+    //     *MINER,
+    //     LOCK_CREATE_MINER_DESPOIT_METHOD,
+    //     IpldBlock::serialize_cbor(&expected_lock_create_miner_deposit_params).unwrap(),
+    //     TokenAmount::zero(),
+    //     IpldBlock::serialize_cbor(&()).unwrap(),
+    //     ExitCode::OK,
+    // );
 
     let ret: CreateMinerReturn = rt
         .call::<PowerActor>(Method::CreateMinerExported as MethodNum, params)

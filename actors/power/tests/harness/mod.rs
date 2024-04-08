@@ -167,6 +167,7 @@ impl Harness {
             window_post_proof_type,
             peer_id: peer.clone(),
             multi_addresses: multiaddrs.clone(),
+            network_qap: Default::default(),
         };
         let expected_init_params = ExecParams {
             code_cid: *MINER_ACTOR_CODE_ID,
@@ -182,17 +183,18 @@ impl Harness {
             ExitCode::OK,
         );
 
-        // set lock create miner deposit expectation
-        let expected_lock_create_miner_deposit_params =
-            ext::miner::LockCreateMinerDepositParams { amount: TokenAmount::from_atto(320) };
-        rt.expect_send_simple(
-            *miner,
-            ext::miner::LOCK_CREATE_MINER_DESPOIT_METHOD,
-            IpldBlock::serialize_cbor(&expected_lock_create_miner_deposit_params).unwrap(),
-            TokenAmount::zero(),
-            IpldBlock::serialize_cbor(&()).unwrap(),
-            ExitCode::OK,
-        );
+        // FIXME:
+        // // set lock create miner deposit expectation
+        // let expected_lock_create_miner_deposit_params =
+        //     ext::miner::LockCreateMinerDepositParams { amount: TokenAmount::from_atto(320) };
+        // rt.expect_send_simple(
+        //     *miner,
+        //     ext::miner::LOCK_CREATE_MINER_DESPOIT_METHOD,
+        //     IpldBlock::serialize_cbor(&expected_lock_create_miner_deposit_params).unwrap(),
+        //     TokenAmount::zero(),
+        //     IpldBlock::serialize_cbor(&()).unwrap(),
+        //     ExitCode::OK,
+        // );
 
         let params = CreateMinerParams {
             owner: *owner,

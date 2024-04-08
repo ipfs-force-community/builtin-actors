@@ -46,7 +46,7 @@ pub use expiration_queue::*;
 use fil_actors_runtime::cbor::{serialize, serialize_vec};
 use fil_actors_runtime::reward::{FilterEstimate, ThisEpochRewardReturn};
 use fil_actors_runtime::runtime::builtins::Type;
-use fil_actors_runtime::runtime::policy_constants::MAX_SECTOR_NUMBER;
+use fil_actors_runtime::runtime::policy_constants::{MAX_SECTOR_NUMBER, MINIMUM_CONSENSUS_POWER};
 use fil_actors_runtime::runtime::{ActorCode, DomainSeparationTag, Policy, Runtime};
 use fil_actors_runtime::{
     actor_dispatch, actor_error, deserialize_block, extract_send_result, util, ActorContext,
@@ -155,7 +155,6 @@ pub enum Method {
     GetVestingFundsExported = frc42_dispatch::method_hash!("GetVestingFunds"),
     GetPeerIDExported = frc42_dispatch::method_hash!("GetPeerID"),
     GetMultiaddrsExported = frc42_dispatch::method_hash!("GetMultiaddrs"),
-    LockCreateMinerDepositExported = frc42_dispatch::method_hash!("LockCreateMinerDeposit"),
 }
 
 pub const SECTOR_CONTENT_CHANGED: MethodNum = frc42_dispatch::method_hash!("SectorContentChanged");
@@ -180,6 +179,14 @@ impl Actor {
         check_control_addresses(rt.policy(), &params.control_addresses)?;
         check_peer_info(rt.policy(), &params.peer_id, &params.multi_addresses)?;
         check_valid_post_proof_type(rt.policy(), params.window_post_proof_type)?;
+
+        let balance = rt.current_balance();
+        let deposit = calculate_create_miner_deposit(rt, params.network_qap)?;
+        if balance < deposit {
+            return Err(actor_error!(insufficient_funds;
+                "not enough balance to lock for create miner deposit: \
+                sent balance {} < deposit {}", balance.atto(), deposit.atto()));
+        }
 
         let owner = rt.resolve_address(&params.owner).ok_or_else(|| {
             actor_error!(illegal_argument, "unable to resolve owner address: {}", params.owner)
@@ -239,7 +246,10 @@ impl Actor {
             e.downcast_default(ExitCode::USR_ILLEGAL_STATE, "failed to construct illegal state")
         })?;
 
-        let st = State::new(policy, rt.store(), info_cid, period_start, deadline_idx)?;
+        let store = rt.store();
+        let mut st = State::new(policy, store, info_cid, period_start, deadline_idx)?;
+        st.add_locked_funds(store, rt.curr_epoch(), &deposit, &REWARD_VESTING_SPEC)
+            .map_err(|e| actor_error!(illegal_state, e))?;
         rt.create(&st)?;
         Ok(())
     }
@@ -311,12 +321,7 @@ impl Actor {
         let vesting_funds = state
             .load_vesting_funds(rt.store())
             .map_err(|e| actor_error!(illegal_state, "failed to load vesting funds: {}", e))?;
-        let mut ret = vesting_funds.funds.into_iter().map(|v| (v.epoch, v.amount)).collect_vec();
-
-        // add create miner deposit into vest table
-        if let Some(CreateMinerDeposit { amount, epoch }) = &state.create_miner_deposit {
-            ret.push((*epoch, amount.clone()));
-        }
+        let ret = vesting_funds.funds.into_iter().map(|v| (v.epoch, v.amount)).collect_vec();
 
         Ok(GetVestingFundsReturn { vesting_funds: ret })
     }
@@ -3425,20 +3430,6 @@ impl Actor {
         state.check_balance_invariants(&rt.current_balance()).map_err(balance_invariants_broken)?;
         Ok(())
     }
-
-    /// Lock the create miner deposit for 180 days.
-    /// See FIP-0077, https://github.com/filecoin-project/FIPs/blob/master/FIPS/fip-0077.md
-    fn lock_create_miner_deposit(
-        rt: &impl Runtime,
-        params: LockCreateMinerDepositParams,
-    ) -> Result<(), ActorError> {
-        rt.validate_immediate_caller_is(std::iter::once(&STORAGE_POWER_ACTOR_ADDR))?;
-        rt.transaction(|st: &mut State, rt| {
-            st.add_create_miner_deposit(params.amount, rt.curr_epoch());
-
-            Ok(())
-        })
-    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -4973,7 +4964,6 @@ fn resolve_worker_address(rt: &impl Runtime, raw: Address) -> Result<ActorID, Ac
 }
 
 fn burn_funds(rt: &impl Runtime, amount: TokenAmount) -> Result<(), ActorError> {
-    log::debug!("storage provder {} burning {}", rt.message().receiver(), amount);
     if amount.is_positive() {
         extract_send_result(rt.send_simple(&BURNT_FUNDS_ACTOR_ADDR, METHOD_SEND, None, amount))?;
     }
@@ -5378,6 +5368,49 @@ fn activate_new_sector_infos(
     Ok(())
 }
 
+/// Calculate create miner deposit by MINIMUM_CONSENSUS_POWER x StateMinerInitialPledgeCollateral
+/// See FIP-0077, https://github.com/filecoin-project/FIPs/blob/master/FIPS/fip-0077.md
+pub fn calculate_create_miner_deposit(
+    rt: &impl Runtime,
+    network_qap: FilterEstimate,
+) -> Result<TokenAmount, ActorError> {
+    // set network pledge inputs
+    let rew = request_current_epoch_block_reward(rt)?;
+    let circulating_supply = rt.total_fil_circ_supply();
+    let pledge_inputs = NetworkPledgeInputs {
+        network_qap,
+        network_baseline: rew.this_epoch_baseline_power,
+        circulating_supply,
+        epoch_reward: rew.this_epoch_reward_smoothed,
+    };
+
+    /// set sector size with min power
+    #[cfg(feature = "min-power-2k")]
+    let sector_size = SectorSize::_2KiB;
+    #[cfg(feature = "min-power-2g")]
+    let sector_size = SectorSize::_8MiB;
+    #[cfg(feature = "min-power-32g")]
+    let sector_size = SectorSize::_512MiB;
+    #[cfg(not(any(
+        feature = "min-power-2k",
+        feature = "min-power-2g",
+        feature = "min-power-32g"
+    )))]
+    let sector_size = SectorSize::_32GiB;
+
+    let sector_number = MINIMUM_CONSENSUS_POWER / sector_size as i64;
+    let power =
+        qa_power_for_weight(sector_size, MIN_SECTOR_EXPIRATION, &BigInt::zero(), &BigInt::zero());
+    let sector_initial_pledge = initial_pledge_for_power(
+        &power,
+        &pledge_inputs.network_baseline,
+        &pledge_inputs.epoch_reward,
+        &pledge_inputs.network_qap,
+        &pledge_inputs.circulating_supply,
+    );
+    Ok(sector_initial_pledge * sector_number)
+}
+
 pub struct SectorPiecesActivationInput {
     pub piece_manifests: Vec<PieceActivationManifest>,
     pub sector_expiry: ChainEpoch,
@@ -5766,7 +5799,6 @@ impl ActorCode for Actor {
         GetMultiaddrsExported => get_multiaddresses,
         ProveCommitSectors3 => prove_commit_sectors3,
         ProveReplicaUpdates3 => prove_replica_updates3,
-        LockCreateMinerDepositExported => lock_create_miner_deposit,
     }
 }
 
