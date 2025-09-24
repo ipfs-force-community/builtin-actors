@@ -57,16 +57,17 @@ use fil_actor_miner::{
     ExpirationQueue, ExpirationSet, ExtendSectorExpiration2Params, FaultDeclaration,
     GetAvailableBalanceReturn, GetBeneficiaryReturn, GetControlAddressesReturn,
     GetMultiaddrsReturn, GetPeerIDReturn, Method, Method as MinerMethod,
-    MinerConstructorParams as ConstructorParams, MinerInfo, NO_QUANTIZATION, Partition,
-    PendingBeneficiaryChange, PieceActivationManifest, PieceChange, PieceReturn, PoStPartition,
-    PowerPair, PreCommitSectorBatchParams, PreCommitSectorBatchParams2, PreCommitSectorParams,
-    ProveCommitSectorParams, ProveCommitSectors3Params, ProveCommitSectors3Return, QuantSpec,
-    RecoveryDeclaration, ReportConsensusFaultParams, SECTOR_CONTENT_CHANGED, SECTORS_AMT_BITWIDTH,
-    SectorActivationManifest, SectorChanges, SectorContentChangedParams,
-    SectorContentChangedReturn, SectorOnChainInfo, SectorPreCommitInfo, SectorPreCommitOnChainInfo,
-    SectorReturn, SectorUpdateManifest, Sectors, State, SubmitWindowedPoStParams,
-    TerminateSectorsParams, TerminationDeclaration, VerifiedAllocationKey, WindowedPoSt,
-    WithdrawBalanceParams, WithdrawBalanceReturn, consensus_fault_penalty, ext,
+    MinerConstructorParams as ConstructorParams, MinerInfo, MovePartitionsParams, NO_QUANTIZATION,
+    Partition, PendingBeneficiaryChange, PieceActivationManifest, PieceChange, PieceReturn,
+    PoStPartition, PowerPair, PreCommitSectorBatchParams, PreCommitSectorBatchParams2,
+    PreCommitSectorParams, ProveCommitSectorParams, ProveCommitSectors3Params,
+    ProveCommitSectors3Return, QuantSpec, RecoveryDeclaration, ReportConsensusFaultParams,
+    SECTOR_CONTENT_CHANGED, SECTORS_AMT_BITWIDTH, SectorActivationManifest, SectorChanges,
+    SectorContentChangedParams, SectorContentChangedReturn, SectorOnChainInfo, SectorPreCommitInfo,
+    SectorPreCommitOnChainInfo, SectorReturn, SectorUpdateManifest, Sectors, State,
+    SubmitWindowedPoStParams, TerminateSectorsParams, TerminationDeclaration,
+    VerifiedAllocationKey, WindowedPoSt, WithdrawBalanceParams, WithdrawBalanceReturn,
+    consensus_fault_penalty, ext,
     ext::market::ON_MINER_SECTORS_TERMINATE_METHOD,
     ext::power::UPDATE_CLAIMED_POWER_METHOD,
     ext::verifreg::{
@@ -1830,7 +1831,7 @@ impl ActorHarness {
         )
     }
 
-    fn make_window_post_verify_info(
+    pub fn make_window_post_verify_info(
         &self,
         infos: &[SectorOnChainInfo],
         all_ignored: &BitField,
@@ -1964,7 +1965,12 @@ impl ActorHarness {
         rt.verify();
     }
 
-    fn get_submitted_proof(&self, rt: &MockRuntime, deadline: &Deadline, idx: u64) -> WindowedPoSt {
+    pub fn get_submitted_proof(
+        &self,
+        rt: &MockRuntime,
+        deadline: &Deadline,
+        idx: u64,
+    ) -> WindowedPoSt {
         amt_get::<WindowedPoSt>(rt, &deadline.optimistic_post_submissions_snapshot, idx)
     }
 
@@ -2355,6 +2361,8 @@ impl ActorHarness {
         rt.expect_validate_caller_addr(self.caller_addrs());
 
         let mut sector_infos: Vec<SectorOnChainInfo> = Vec::with_capacity(sectors.len() as usize);
+        let mut deal_ids: Vec<DealID> = Vec::new();
+
         let mut has_active_sector = false;
         for sector in sectors.iter() {
             let (_, partition) = self.find_sector(&rt, sector);
@@ -2364,7 +2372,11 @@ impl ActorHarness {
             if !non_active {
                 has_active_sector = true;
             }
-            sector_infos.push(self.get_sector(rt, sector));
+
+            let sector = self.get_sector(rt, sector);
+
+            deal_ids.extend(sector.deprecated_deal_ids.iter());
+            sector_infos.push(sector);
         }
 
         self.expect_query_network_info(rt);
@@ -2404,8 +2416,20 @@ impl ActorHarness {
         }
 
         let sector_power = power_for_sectors(self.sector_size, &sector_infos);
+        let params = UpdateClaimedPowerParams {
+            raw_byte_delta: -sector_power.raw.clone(),
+            quality_adjusted_delta: -sector_power.qa.clone(),
+        };
+
         if has_active_sector {
-            expect_update_power(rt, sector_power.clone().neg());
+            rt.expect_send_simple(
+                STORAGE_POWER_ACTOR_ADDR,
+                UPDATE_CLAIMED_POWER_METHOD,
+                IpldBlock::serialize_cbor(&params).unwrap(),
+                TokenAmount::zero(),
+                None,
+                ExitCode::OK,
+            );
         }
 
         // create declarations
@@ -2791,6 +2815,28 @@ impl ActorHarness {
         Ok(())
     }
 
+    pub fn move_partitions(
+        &self,
+        rt: &MockRuntime,
+        orig_deadline: u64,
+        dest_deadline: u64,
+        partitions: BitField,
+        mut f: impl FnMut(),
+    ) -> Result<(), ActorError> {
+        f();
+
+        let params = MovePartitionsParams { orig_deadline, dest_deadline, partitions };
+
+        rt.expect_validate_caller_addr(self.caller_addrs());
+        rt.set_caller(*ACCOUNT_ACTOR_CODE_ID, self.worker);
+
+        rt.call::<Actor>(
+            Method::MovePartitions as u64,
+            IpldBlock::serialize_cbor(&params).unwrap(),
+        )?;
+        rt.verify();
+        Ok(())
+    }
     pub fn get_info(&self, rt: &MockRuntime) -> MinerInfo {
         let state: State = rt.get_state();
         state.get_info(rt.store()).unwrap()
